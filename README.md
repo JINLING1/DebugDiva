@@ -1,5 +1,6 @@
-# Vue 3 + Vite
+# LLM对话框组件
 
-This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+本项目是一个支持文本、图片、PDF输入及流式响应展示的多模式对话框组件，支持流式响应，集成 Coze API 实现大模型对话功能。
 
-Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
+采用 Vite + Vue3 +TypeScript 
+
