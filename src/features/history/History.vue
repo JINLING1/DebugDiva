@@ -1,133 +1,169 @@
 <template>
   <div class="aside-block">
-    <el-table :data="tableData" class="table-block">
-      <el-table-column label="Work" width="180">
-        <template #default="scope">
-          <el-popover effect="light" trigger="hover" placement="top" width="auto">
-            <template #default>
-              <div>work: {{ scope.row.work }}</div>
-              <div>time: {{ scope.row.date }}</div>
-            </template>
-            <template #reference>
-              <el-tag>{{
-                scope.row.work.length > 12
-                  ? scope.row.work.slice(0, 12) + '...'
-                  : scope.row.work
-              }}</el-tag>
-            </template>
-          </el-popover>
-        </template>
-      </el-table-column>
-      <el-table-column label="Operations" class="oper-btn">
-        <template #default="scope">
-          <el-button size="small" @click="handleEdit(scope.$index, scope.row)">
-            Edit
-          </el-button>
-          <el-button size="small" type="danger" @click="handleDelete(scope.$index, scope.row)" id="delete-btn">
-            Delete
-          </el-button>
-          <div v-if="isRowEditing(scope.$index)">
-            <el-input v-model="scope.row.work" class="input-block" :autosize="{ minRows: 1, maxRows: 3 }"
-              type="textarea" style="font-size: 12px" />
-            <el-button size="small" type="primary" @click="handleEdit(scope.$index, scope.row)">Save</el-button>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="new-chat-wrapper">
+      <el-button class="new-chat-btn" type="primary" plain @click="startNewChat">
+        <el-icon>
+          <Plus />
+        </el-icon>
+        <span style="margin-left: 5px;">开启新对话</span>
+      </el-button>
+    </div>
+
+    <div class="session-list">
+      <div v-for="session in chatSessions" :key="session.id" class="session-item"
+        :class="{ active: currentSessionId === session.id }" @click="switchSession(session.id)">
+        <el-icon class="session-icon">
+          <ChatDotRound />
+        </el-icon>
+
+        <div class="session-title-wrapper">
+          <span v-if="editingId !== session.id" class="session-title" :title="session.title">
+            {{ session.title }}
+          </span>
+          <el-input v-else v-model="editTitleText" size="small" @keyup.enter="saveEdit(session.id)"
+            @blur="saveEdit(session.id)" @click.stop ref="editInputRef" />
+        </div>
+
+        <div class="session-actions" v-if="editingId !== session.id">
+          <el-icon class="action-icon" @click.stop="startEdit(session)">
+            <Edit />
+          </el-icon>
+          <el-icon class="action-icon delete-icon" @click.stop="handleDelete(session.id)">
+            <Delete />
+          </el-icon>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+import { ref, nextTick } from 'vue';
+import { useChat } from '../../hooks/useChat';
 
-import { ref } from 'vue';
-import { useChat } from '../../hooks/useChat'
-import type { User } from '../../types/User'
-
-const { tableData,
-  saveDataToLocalStorage,
+const {
+  chatSessions,
+  currentSessionId,
+  startNewChat,
+  switchSession,
+  deleteSession,
+  updateSessionTitle
 } = useChat();
 
+const editingId = ref<string | null>(null);
+const editTitleText = ref('');
+const editInputRef = ref<any>(null);
 
-const isEditing = ref<number | null>(null);
-const isRowEditing = (index: number) => isEditing.value === index;
-
-
-// 处理编辑按钮点击事件
-const handleEdit = (index: number, row: User) => {
-  if (isEditing.value === index) {
-    // 如果当前行已经处于编辑状态，保存编辑内容
-    row.work = row.work.substring(0, 10);
-    row.date = new Date().toISOString(); // 更新当前时间
-    isEditing.value = null; // 退出编辑模式
-    saveDataToLocalStorage(); // 保存数据
-  } else {
-    // 如果当前行没有处于编辑状态，进入编辑模式
-    isEditing.value = index;
-  }
+//进入编辑模式
+const startEdit = (session: any) => {
+  editingId.value = session.id;
+  editTitleText.value = session.title;
+  nextTick(() => {
+    editInputRef.value?.[0]?.focus();
+  });
 };
 
-// 处理删除操作
-const handleDelete = (index: number, row: User) => {
-  if (index >= 0 && index < tableData.value.length) {
-    tableData.value.splice(index, 1); // 删除指定行
-    saveDataToLocalStorage(); // 删除后保存数据
-  } else {
-    console.error('Invalid index for delete operation');
+const saveEdit = (id: string) => {
+  if (editTitleText.value.trim()) {
+    updateSessionTitle(id, editTitleText.value.trim());
   }
+  editingId.value = null;
+};
+
+const handleDelete = (id: string) => {
+  deleteSession(id);
 };
 </script>
 
-<style>
+<style scoped>
 .aside-block {
   height: 100%;
-  width: 300px;
-  overflow-y: auto;
+  width: 100%;
+  background-color: #f9f9f9;
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid #e4e7ed;
 }
 
-.oper-btn {
-  position: relative;
+.new-chat-wrapper {
+  padding: 15px;
 }
 
-.input-block {
-  height: 80%;
+.new-chat-btn {
+  width: 100%;
+  border-radius: 8px;
+  justify-content: center;
+  font-weight: bold;
+  height: 40px;
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 10px;
+  margin-bottom: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #333;
+  transition: background-color 0.2s;
+}
+
+.session-item:hover {
+  background-color: #eef2f5;
+}
+
+.session-item.active {
+  background-color: #e3f2fd;
+  color: #1976d2;
+  font-weight: 500;
+}
+
+.session-icon {
   font-size: 18px;
-  border-radius: 20px;
+  margin-right: 10px;
+  opacity: 0.7;
 }
 
-.el-tag {
-  max-width: 200px;
+.session-title-wrapper {
+  flex: 1;
+  overflow: hidden;
+}
+
+.session-title {
+  display: block;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  position: relative;
-  display: inline-flex !important;
-  align-items: center;
-  height: 32px;
-  line-height: normal !important;
-  vertical-align: middle !important;
-}
-
-.el-tag__content {
-  padding: 0px 12px 0px 0px;
-}
-
-.el-tag .delete-icon {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
   font-size: 14px;
-  line-height: 1;
-  transition: all 0.2s;
+}
+
+.session-actions {
+  display: none;
+  margin-left: 10px;
+}
+
+.session-item:hover .session-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-icon {
+  font-size: 16px;
+  color: #909399;
+  transition: color 0.2s;
+}
+
+.action-icon:hover {
+  color: #409eff;
 }
 
 .delete-icon:hover {
   color: #f56c6c;
-  transform: translateY(-50%) scale(1.5);
-}
-
-#delete-btn {
-  position: absolute;
-  width: 40%;
 }
 </style>

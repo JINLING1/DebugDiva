@@ -1,55 +1,136 @@
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UploadUserFile } from 'element-plus';
-import type { User } from '../types/User';
 
-//请求参数
+//聊天消息
+export interface ChatMessage {
+	message: string;
+	isUser: boolean;
+	isComplete: boolean;
+}
+
+//聊天会话
+export interface ChatSession {
+	id: string;
+	title: string;
+	date: string;
+	messages: ChatMessage[];
+}
+
 interface SearchParams {
 	input?: string;
 	fileList?: UploadUserFile[];
 	userInput?: string;
 	updateIndex?: number;
 }
-//tableData:展示在aside的对话历史
-const tableData = ref<User[]>([]);
-//对话历史
-const chatHistory = ref<
-	{ message: string; isUser: boolean; isComplete: boolean }[]
->([]);
 
-//ai是否正在输出
+const chatSessions = ref<ChatSession[]>([]);
+const currentSessionId = ref<string | null>(null); // 记录当前会话id
+const chatHistory = ref<ChatMessage[]>([]); // 当前会话的聊天记录
+
 const isAssistantTyping = ref(false);
-
-// 用于中断 fetch 请求
 const abortController = ref<AbortController | null>(null);
 
-//处理流式输出
 const streamedOutput = ref('');
 const streamedText = ref('');
 let assistantMessageIndex = -1;
 
 export function useChat() {
-	const saveDataToLocalStorage = () => {
-		localStorage.setItem('tableData', JSON.stringify(tableData.value));
+	const saveSessionsToLocalStorage = () => {
+		// 每次发生对话时，同步当前消息到会话列表中
+		if (chatHistory.value.length > 0) {
+			if (!currentSessionId.value) {
+				// 如果是新会话，自动生成ID且取用户的第一句话作为标题
+				currentSessionId.value = Date.now().toString();
+				chatSessions.value.unshift({
+					//向chatSessions开头添加新会话
+					id: currentSessionId.value,
+					title:
+						chatHistory.value[0].message.slice(0, 15) +
+						(chatHistory.value[0].message.length > 15 ? '...' : ''),
+					date: new Date().toISOString(),
+					messages: JSON.parse(JSON.stringify(chatHistory.value)), // 深拷贝防污染
+				});
+			} else {
+				// 如果是已有会话，更新对应session的消息列表
+				const session = chatSessions.value.find(
+					targetSession => targetSession.id === currentSessionId.value,
+				);
+				if (session) {
+					session.messages = JSON.parse(JSON.stringify(chatHistory.value));
+				}
+			}
+		}
+		localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
 	};
 
 	const loadDataFromLocalStorage = () => {
-		const storedData = localStorage.getItem('tableData');
+		const storedData = localStorage.getItem('chatSessions');
 		if (storedData) {
-			tableData.value = JSON.parse(storedData);
+			chatSessions.value = JSON.parse(storedData);
+		}
+		// 每次刷新页面，默认准备好一个干净的新会话
+		startNewChat();
+	};
+
+	//重置会话状态
+	const startNewChat = () => {
+		if (isAssistantTyping.value)
+			return ElMessage.warning(
+				'The assistant is outputting, please try again later.',
+			);
+		currentSessionId.value = null;
+		chatHistory.value = [];
+	};
+
+	//切换会话
+	const switchSession = (id: string) => {
+		if (isAssistantTyping.value)
+			return ElMessage.warning(
+				'The assistant is outputting, please try again later.',
+			);
+		const session = chatSessions.value.find(
+			targetSession => targetSession.id === id,
+		);
+		if (session) {
+			currentSessionId.value = id;
+			chatHistory.value = JSON.parse(JSON.stringify(session.messages));
 		}
 	};
 
-	// 更新UI的函数
+	const deleteSession = (id: string) => {
+		chatSessions.value = chatSessions.value.filter(
+			targetSession => targetSession.id !== id,
+		);
+		if (currentSessionId.value === id) {
+			startNewChat(); // 如果删的是当前正在聊的，自动重置为空白新对话
+		} else {
+			localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
+		}
+	};
+
+	const updateSessionTitle = (id: string, newTitle: string) => {
+		const session = chatSessions.value.find(
+			targetSession => targetSession.id === id,
+		);
+		if (session) {
+			session.title = newTitle;
+			localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
+		}
+	};
+
 	const updateUI = () => {
-		streamedOutput.value = chatHistory.value.join('');
+		streamedOutput.value = chatHistory.value
+			.map(chatMessage => chatMessage.message)
+			.join('');
 	};
 
 	const updateLastAssistantMessage = () => {
 		if (assistantMessageIndex !== -1) {
+			//如果当前有正在输出的AI消息，实时更新它的内容
 			chatHistory.value[assistantMessageIndex] = {
 				message: `${streamedText.value}`,
-				isUser: false, // 标记为 AI 消息
+				isUser: false,
 				isComplete: false,
 			};
 			updateUI();
@@ -58,28 +139,22 @@ export function useChat() {
 
 	const processStreamedData = (chunk: string) => {
 		const lines = chunk.split('\n');
-
 		let isDeltaEvent = false;
 		let jsonDataLine = '';
-
 		for (const line of lines) {
 			if (line.startsWith('event:conversation.message.delta')) {
 				isDeltaEvent = true;
 				continue;
 			}
-
 			if (isDeltaEvent && line.startsWith('data:')) {
 				jsonDataLine = line.replace('data:', '').trim();
 				isDeltaEvent = false;
 			}
-
 			if (jsonDataLine) {
 				try {
 					const parsedData = JSON.parse(jsonDataLine);
-
 					if (parsedData.role === 'assistant' && parsedData.type === 'answer') {
 						streamedText.value += parsedData.content;
-						// 仅更新最后一条消息，不重复添加
 						updateLastAssistantMessage();
 					}
 				} catch (error) {
@@ -90,7 +165,6 @@ export function useChat() {
 		}
 	};
 
-	//调用模型搜索用户提问
 	const handleSearch = async ({
 		input = '',
 		fileList = [],
@@ -101,33 +175,24 @@ export function useChat() {
 			ElMessage.warning('The assistant is outputting, please try again later.');
 			return;
 		}
-
 		if (!input.trim() && !userInput) {
 			ElMessage.error('Input cannot be empty or just spaces!');
 			return;
 		}
-		// 如果传入了 userInput，则更新 input
-		if (userInput) {
-			input = userInput;
-		}
+		if (userInput) input = userInput;
 
-		// 助手正在输出
 		isAssistantTyping.value = true;
 
-		// 如果是更新操作，直接修改现有消息
 		if (updateIndex !== undefined) {
 			const chat = chatHistory.value[updateIndex];
-			chat.message = '<div class="loading-spinner"></div>'; // 显示加载状态
+			chat.message = '<div class="loading-spinner"></div>';
 			chat.isComplete = false;
 		} else {
-			//用户消息存为对象
 			chatHistory.value.push({
-				message: `${input}`, // 处理换行
+				message: `${input}`,
 				isUser: true,
 				isComplete: false,
 			});
-
-			//  添加 AI 占位符
 			chatHistory.value.push({
 				message: '<div class="loading-spinner"></div>',
 				isUser: false,
@@ -135,10 +200,13 @@ export function useChat() {
 			});
 		}
 
-		assistantMessageIndex = chatHistory.value.length - 1; // 记录索引
+		assistantMessageIndex = chatHistory.value.length - 1;
 		streamedText.value = '';
 
-		let payload; //payload 是最终发送给 API 的 JSON 字符串
+		// 发送消息时，立刻同步保存到本地列表
+		saveSessionsToLocalStorage();
+
+		let payload;
 		if (fileList.length > 0) {
 			const fileId = fileList[0].url;
 			const content = JSON.stringify([
@@ -151,11 +219,7 @@ export function useChat() {
 				stream: true,
 				auto_save_history: true,
 				additional_messages: [
-					{
-						role: 'user',
-						content: content,
-						content_type: 'object_string',
-					},
+					{ role: 'user', content: content, content_type: 'object_string' },
 				],
 			});
 		} else {
@@ -165,11 +229,7 @@ export function useChat() {
 				stream: true,
 				auto_save_history: true,
 				additional_messages: [
-					{
-						role: 'user',
-						content: input,
-						content_type: 'text',
-					},
+					{ role: 'user', content: input, content_type: 'text' },
 				],
 			});
 		}
@@ -184,52 +244,34 @@ export function useChat() {
 					'Content-Type': 'application/json',
 				},
 				body: payload,
-				signal: abortController.value.signal, // 绑定 AbortSignal
+				signal: abortController.value.signal,
 			});
-			//记录到历史记录
-			tableData.value.push({
-				date: new Date().toISOString(),
-				work: `User: ${input}`,
-			});
-			saveDataToLocalStorage();
-			if (!response.ok) {
+
+			if (!response.ok)
 				throw new Error('Network response was not ok ' + response.statusText);
-			}
+
 			const reader = response.body?.getReader();
 			if (reader) {
 				const decoder = new TextDecoder();
-				let streamedText = '';
 				while (true) {
-					// 检查是否被暂停
-					if (!isAssistantTyping.value) {
-						break;
-					}
+					if (!isAssistantTyping.value) break;
 					const { done, value } = await reader.read();
 					if (done) {
-						if (assistantMessageIndex !== -1) {
-							chatHistory.value[assistantMessageIndex].isComplete = true; // 标记为完成
-						}
+						if (assistantMessageIndex !== -1)
+							chatHistory.value[assistantMessageIndex].isComplete = true;
 						assistantMessageIndex = -1;
-						// 助手输出完成
 						isAssistantTyping.value = false;
-						// 输出已完成，清空输入框
-						input = '';
 						break;
 					}
 					const text = decoder.decode(value, { stream: true });
 					processStreamedData(text);
 
-					// 将助手返回写到历史记录
 					let answerValue;
 					try {
-						// text 以 "event:conversation.message.completed" 开头
 						if (text.startsWith('event:conversation.message.completed')) {
-							// 查找 "data:" 的位置
 							const dataStartIndex = text.indexOf('data:');
 							if (dataStartIndex !== -1) {
-								// 提取 JSON 字符串部分
 								const jsonString = text.substring(dataStartIndex + 5).trim();
-								// 检查字符串中是否包含 "type":"answer"
 								if (jsonString.includes('"type":"answer"')) {
 									const parsedData = JSON.parse(jsonString);
 									if (parsedData.type === 'answer' && parsedData.content) {
@@ -242,45 +284,31 @@ export function useChat() {
 						console.error('Failed to parse JSON:', error);
 					}
 					if (answerValue) {
-						tableData.value.push({
-							date: new Date().toISOString(),
-							work: `Assistant: ${answerValue}`,
-						});
-						saveDataToLocalStorage();
-						// 更新当前消息内容
-						if (assistantMessageIndex !== -1) {
+						if (assistantMessageIndex !== -1)
 							chatHistory.value[assistantMessageIndex].message = answerValue;
-						}
+						// AI 输出完最终结果后，再深拷贝保存一次完整上下文
+						saveSessionsToLocalStorage();
 					}
-					// 更新UI
 					updateUI();
 				}
 			}
 		} catch (error) {
-			// 助手输出完成状态（处理错误时）
 			isAssistantTyping.value = false;
 		}
 	};
 
-	//暂停模型
 	const pauseSearch = () => {
-		if (abortController.value) {
-			abortController.value.abort(); // 中断 fetch 请求
-		}
+		if (abortController.value) abortController.value.abort();
 		isAssistantTyping.value = false;
 		ElMessage.success('Paused assistant output.');
 	};
 
-	// 处理更新
 	const handleUpdate = async (index: number) => {
-		// 查找最新的用户消息
 		const latestUserMessage = chatHistory.value
 			.slice()
 			.reverse()
 			.find(chat => chat.isUser);
-
 		if (latestUserMessage) {
-			// 调用 handleSearch，传入最新的用户消息和需要更新的索引
 			await handleSearch({
 				userInput: latestUserMessage.message,
 				updateIndex: index,
@@ -291,8 +319,12 @@ export function useChat() {
 	};
 
 	return {
-		tableData,
-		saveDataToLocalStorage,
+		chatSessions,
+		currentSessionId,
+		startNewChat,
+		switchSession,
+		deleteSession,
+		updateSessionTitle,
 		loadDataFromLocalStorage,
 		chatHistory,
 		isAssistantTyping,
