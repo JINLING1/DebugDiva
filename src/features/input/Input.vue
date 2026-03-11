@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { UploadProps } from "element-plus";
 import { useChat } from '../../hooks/useChat'
@@ -72,13 +72,16 @@ const {
   loadDataFromLocalStorage,
   isAssistantTyping,
   handleSearch,
-  pauseSearch, } = useChat();
+  pauseSearch,
+  chatHistory,
+} = useChat();
 const { fileList, handleFileDelete, handleFileChange } = useFile();
 
 // 添加对话框状态类型
 type DialogState = "collapsed" | "expanded" | "dialog";
 
 const dialogState = ref<DialogState>("collapsed");
+
 const suggestedQuestions = ref([
   "如何调试JavaScript内存泄漏？",
   "Python异步编程的最佳实践是什么？",
@@ -90,7 +93,7 @@ const saveDialogState = () => {
   localStorage.setItem("dialogState", dialogState.value);
 };
 //调用搜索前改变dialogState
-function beforeSearch() {
+const beforeSearch = () => {
   if (dialogState.value !== 'dialog') {
     dialogState.value = 'dialog';
     showSuggestions.value = false; //隐藏建议
@@ -183,6 +186,21 @@ const beforeRemove: UploadProps["beforeRemove"] = (uploadFile, uploadFiles) => {
     () => false
   );
 };
+
+watch(
+  () => chatHistory.value.length,
+  (newLength) => {
+    if (newLength > 0) {
+      dialogState.value = 'dialog';
+      showSuggestions.value = false;
+    } else {
+      dialogState.value = 'collapsed';
+    }
+    saveDialogState();
+  },
+  { immediate: true } //组件一加载就先判断一次
+);
+
 
 onMounted(() => {
   loadDataFromLocalStorage();
