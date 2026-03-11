@@ -1,7 +1,7 @@
 <template>
   <!--四部分布局 aside/header/main/footer-->
   <el-container class="main-container">
-    <el-aside>
+    <el-aside :class="{ 'is-collapsed': !isSidebarOpen }">
       <History></History>
     </el-aside>
     <el-container class="right-container">
@@ -25,15 +25,24 @@ import Welcome from "./UI/Welcome.vue";
 import History from "./features/History/History.vue";
 import ChatList from "./features/chat/ChatList.vue";
 import Input from "./features/input/Input.vue";
+import { useChat } from './hooks/useChat';
+
+const { isSidebarOpen } = useChat(); // 获取侧边栏状态
 </script>
 
 
 <style>
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
 .main-container {
   height: 100vh;
   width: 100vw;
   display: flex;
-  overflow: hidden;
+  background-color: #f9f9f9;
 }
 
 .right-container {
@@ -44,7 +53,14 @@ import Input from "./features/input/Input.vue";
 }
 
 .el-aside {
-  width: 300px;
+  width: 260px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: #f3f4f6;
+  /* overflow: hidden; */
+}
+
+.el-aside.is-collapsed {
+  width: 0 !important;
 }
 
 .el-header {

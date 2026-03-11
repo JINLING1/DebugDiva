@@ -83,6 +83,7 @@ const handleDelete = (id: string) => {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e4e7ed;
+  overflow-x: hidden;
 }
 
 .new-chat-wrapper {
@@ -100,6 +101,7 @@ const handleDelete = (id: string) => {
 .session-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0 10px;
 }
 

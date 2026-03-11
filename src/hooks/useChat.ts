@@ -35,6 +35,8 @@ const streamedOutput = ref('');
 const streamedText = ref('');
 let assistantMessageIndex = -1;
 
+const isSidebarOpen = ref(true);
+
 export function useChat() {
 	const saveSessionsToLocalStorage = () => {
 		// 每次发生对话时，同步当前消息到会话列表中
@@ -331,5 +333,6 @@ export function useChat() {
 		handleSearch,
 		pauseSearch,
 		handleUpdate,
+		isSidebarOpen,
 	};
 }

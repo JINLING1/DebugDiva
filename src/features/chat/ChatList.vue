@@ -1,14 +1,16 @@
 <template>
   <div class="main-block">
     <!-- 欢迎消息框（当 chatHistory 为空时显示） -->
-    <div v-if="chatHistory.length === 0" class="welcome-message">
-      <div class="avatar-container">
-        <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
+    <div v-if="chatHistory.length === 0" class="welcome-wrapper">
+      <div class="welcome-message">
+        <div class="avatar-container">
+          <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
+        </div>
+        <p>
+          <strong>我是 DebugDiva！我是你的智能助手，很高兴见到你！</strong><br />
+          <span class="small-text">可以帮你调试代码，解决问题，生成图片！</span>
+        </p>
       </div>
-      <p>
-        <strong>我是 DebugDiva！我是你的智能助手，很高兴见到你！</strong><br />
-        <span class="small-text">可以帮你调试代码，解决问题，生成图片！</span>
-      </p>
     </div>
     <!-- 聊天部分 -->
     <div v-for="(chat, index) in chatHistory" :key="index">
@@ -40,6 +42,7 @@
 </template>
 
 <script setup lang="ts">
+
 import { onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import Markdown from "../../components/Markdown.vue";
@@ -86,19 +89,26 @@ onMounted(() => {
   height: 100%;
 }
 
+.welcome-wrapper {
+  display: flex;
+  justify-content: center;
+  height: 50%;
+  width: 80%;
+}
+
+
 /* 欢迎页 */
 .welcome-message {
   display: flex;
   align-items: center;
-  background-color: #f0f8ff;
   color: #333;
   padding: 15px;
   border-radius: 8px;
-  width: 33%;
   text-align: left;
-  font-size: 16px;
+  font-size: 30px;
   margin-bottom: 15px;
-  border: 1px solid #d0e4ff;
+  /* 调整格式所需，记得删除 */
+  border: 1px solid #000000;
 }
 
 /* 头像 */
