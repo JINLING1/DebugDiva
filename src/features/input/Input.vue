@@ -367,7 +367,6 @@ onMounted(() => {
 
 .delete-icon:hover {
   color: #f56c6c;
-  transform: translateY(-50%) scale(1.5);
 }
 
 /* 动态转圈 */
