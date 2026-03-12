@@ -1,9 +1,13 @@
 import { ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { UploadUserFile } from 'element-plus';
+import { getConfig } from '../utils/configHelper';
 
 const fileList = ref<UploadUserFile[]>([]);
 const imageUrl = ref<string>('');
+
+const coze_api_key = getConfig('COZE_API_KEY');
+
 export function useFile() {
 	// 文件删除
 	const handleFileDelete = (index: number) => {
@@ -52,8 +56,7 @@ export function useFile() {
 			const response = await fetch('https://api.coze.cn/v1/files/upload', {
 				method: 'POST',
 				headers: {
-					Authorization:
-						'Bearer pat_whaPptjAIGmXgOyXc3BZtdPrvNQEhTTOocziJnumTAGOI8vv2a00yvUxl0v7r1Mo',
+					Authorization: `Bearer ${coze_api_key}`,
 				},
 				body: formData,
 			});

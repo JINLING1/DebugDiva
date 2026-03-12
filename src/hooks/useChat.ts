@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UploadUserFile } from 'element-plus';
+import { getConfig } from '../utils/configHelper';
 
 //聊天消息
 export interface ChatMessage {
@@ -23,6 +24,9 @@ interface SearchParams {
 	userInput?: string;
 	updateIndex?: number;
 }
+
+const coze_api_key = getConfig('COZE_API_KEY');
+const coze_bot_id = getConfig('COZE_BOT_ID');
 
 const chatSessions = ref<ChatSession[]>([]);
 const currentSessionId = ref<string | null>(null); // 记录当前会话id
@@ -216,7 +220,7 @@ export function useChat() {
 				{ type: 'text', text: input },
 			]);
 			payload = JSON.stringify({
-				bot_id: '7477508764942237750',
+				bot_id: coze_bot_id,
 				user_id: '123456789',
 				stream: true,
 				auto_save_history: true,
@@ -226,7 +230,7 @@ export function useChat() {
 			});
 		} else {
 			payload = JSON.stringify({
-				bot_id: '7477508764942237750',
+				bot_id: coze_bot_id,
 				user_id: '123456789',
 				stream: true,
 				auto_save_history: true,
@@ -241,8 +245,7 @@ export function useChat() {
 			const response = await fetch('https://api.coze.cn/v3/chat', {
 				method: 'POST',
 				headers: {
-					Authorization:
-						'Bearer pat_whaPptjAIGmXgOyXc3BZtdPrvNQEhTTOocziJnumTAGOI8vv2a00yvUxl0v7r1Mo',
+					Authorization: `Bearer ${coze_api_key}`,
 					'Content-Type': 'application/json',
 				},
 				body: payload,
