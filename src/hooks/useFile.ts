@@ -1,15 +1,12 @@
 import { ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { UploadUserFile } from 'element-plus';
-import { getConfig } from '../utils/configHelper';
+import { cozeApi } from '../api/coze';
 
 const fileList = ref<UploadUserFile[]>([]);
 const imageUrl = ref<string>('');
 
-const coze_api_key = getConfig('COZE_API_KEY');
-
 export function useFile() {
-	// 文件删除
 	const handleFileDelete = (index: number) => {
 		if (index < 0 || index >= fileList.value.length) return;
 
@@ -49,34 +46,18 @@ export function useFile() {
 		}
 
 		console.log('Updated file list:', fileList);
-		const formData = new FormData();
-		formData.append('file', file.raw as File);
 
 		try {
-			const response = await fetch('https://api.coze.cn/v1/files/upload', {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${coze_api_key}`,
-				},
-				body: formData,
-			});
+			const fileData = await cozeApi.uploadFile(file.raw as File);
 
-			const responseData = await response.json();
-			if (response.ok && responseData?.code === 0) {
-				console.log('File uploaded successfully:', responseData.data);
-				ElMessage.success('File uploaded successfully!');
-				// 更新文件 url 到 fileList
-				console.log('id:', responseData.data.id);
-				// 只更新文件的URL，而不手动push
-				// file.url = responseData.data.id;
-				const fileId = responseData.data.id;
-				imageUrl.value = `https://s.coze.cn/t/${fileId}/`; // 拼接完整图片链接
+			console.log('File uploaded successfully:', fileData);
+			ElMessage.success('File uploaded successfully!');
 
-				file.url = fileId; // 保存原始ID到fileList
-				console.log('Updated file list:', fileList[0].url);
-			} else {
-				throw new Error(responseData?.msg || 'Failed to upload file');
-			}
+			const fileId = fileData.id;
+			imageUrl.value = `https://s.coze.cn/t/${fileId}/`; // 拼接完整图片链接
+
+			file.url = fileId; // 保存原始ID到fileList
+			console.log('Updated file list:', fileList[0].url);
 		} catch (error) {
 			console.error('Error during file upload:', error);
 			const errorMessage =
