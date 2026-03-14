@@ -4,18 +4,14 @@
     'ai-message': !isUserMessage,
     isSearch: isSearch,
   }">
-    <div class="message-content" v-loading="isLoading" @click="handleContentClick" element-loading-text="加载中">
-      <el-icon v-show="isLoading"></el-icon>
-
-      <div v-highlight>
-        <div v-html="htmlContent"></div>
-      </div>
+    <div class="message-content" @click="handleContentClick" element-loading-text="加载中">
+      <div v-html="htmlContent"></div>
 
       <img v-if="!isBigger && isImage" :src="fileUrl" @click="isBigger = true" :class="{ bigger: isBigger }"
         style="width: 100%; cursor: pointer" />
 
       <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
-        <img :src="fileUrl" class="bigger-image" />
+        <img :src="enlargedImageUrl" class="bigger-image" />
       </div>
     </div>
   </div>
@@ -47,39 +43,65 @@ const props = defineProps({
     type: String,
     default: "",
   },
-  isLoading: {
-    type: Boolean,
-    default: false,
-  },
+
 });
 
 const htmlContent = ref<string>("");
-const isImage = ref<boolean>(props.isImage);
-const fileUrl = ref<string>(props.fileUrl);
-const isLoading = ref<boolean>(props.isLoading);
-const isBigger = ref<boolean>(false);
 
-// 【修复点 1】Vue 3 <script setup> 中自定义指令的正确写法
-const vHighlight = {
-  updated(el: HTMLElement) {
-    const blocks = el.querySelectorAll("pre code") as NodeListOf<HTMLElement>;
-    blocks.forEach((block) => {
-      // 避免重复高亮导致控制台警告
-      if (!block.classList.contains('hljs')) {
-        hljs.highlightElement(block);
-      }
-    });
-  },
+//用于控制放大的状态
+const isBigger = ref<boolean>(false);
+const enlargedImageUrl = ref<string>("");
+
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  typographer: true,
+  breaks: true,
+  highlight: function (str: string, lang: string) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        //在解析 Markdown时，直接把高亮的 HTML 标签加上
+        return hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
+      } catch (__) { }
+    }
+    return '';
+  }
+}).use(multiMdTable);
+
+//提取原生的 fence 渲染方法
+const defaultRender = md.renderer.rules.fence || function (tokens: any, idx: any, options: any, env: any, self: { renderToken: (arg0: any, arg1: any, arg2: any) => any; }) {
+  return self.renderToken(tokens, idx, options);
 };
 
-// 【修复点 2】统一的事件委托处理函数（完美解决内存泄漏）
+//拦截 fence，加上复制按钮
+md.renderer.rules.fence = function (tokens: { [x: string]: any; }, idx: string | number, options: any, env: any, self: any) {
+  const token = tokens[idx];
+  const code = token.content;
+
+  const escapedCode = md.utils.escapeHtml(code);
+
+  const buttonHtml = `
+    <div class="copy-icon" data-code="${escapedCode}">
+      <svg viewBox="0 0 1024 1024" width="16" height="16">
+        <path fill="currentColor" d="M768 832a128 128 0 0 1-128 128H192A128 128 0 0 1 64 832V384a128 128 0 0 1 128-128v64H192v448h448v64h128z"/>
+        <path fill="currentColor" d="M384 128a64 64 0 0 0-64 64v656a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64V338.88a64 64 0 0 0-18.88-45.28L657.28 146.88a64 64 0 0 0-45.28-18.88H384zm0-64h227.52a128 128 0 0 1 90.56 37.44l121.44 121.44a128 128 0 0 1 37.44 90.56V848a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V192a128 128 0 0 1 128-128z"/>
+      </svg>
+    </div>
+  `;
+  const renderedBlock = defaultRender(tokens, idx, options, env, self);
+
+
+  return `<div class="code-block-wrapper hljs" style="position: relative;">${buttonHtml}${renderedBlock}</div>`;
+};
+
+
+//统一的事件委托处理函数
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
 
-  // 1. 如果点击的是复制按钮
+  //复制按钮
   const copyBtn = target.closest(".copy-icon");
   if (copyBtn) {
-    // 从自定义属性中直接拿到转义后的代码文本
     const code = copyBtn.getAttribute("data-code");
     if (code) {
       navigator.clipboard.writeText(code).then(() => {
@@ -91,51 +113,22 @@ const handleContentClick = (event: MouseEvent) => {
     return;
   }
 
-  // 2. 如果点击的是 Markdown 解析出来的普通图片
+  //图片点击放大
   if (target.tagName === "IMG" && !target.classList.contains("bigger-image")) {
     const imgEl = target as HTMLImageElement;
-    fileUrl.value = imgEl.src;
+    enlargedImageUrl.value = imgEl.src; // 使用独立的放大变量
     isBigger.value = true;
   }
 };
 
-// 渲染 markdown 消息
+//渲染markdown消息
 const markdownRender = (message: string) => {
+  if (!message) {
+    htmlContent.value = "";
+    return;
+  }
+
   message = message.replace("链接", "图片");
-
-  const md = new MarkdownIt({
-    html: true,
-    linkify: true,
-    typographer: true,
-    breaks: true,
-  }).use(multiMdTable);
-
-  // 【修复点 3】通过重写 markdown-it 的 fence 规则，在渲染 HTML 时直接注入复制按钮，告别耗时的 DOM 操作！
-  const defaultRender = md.renderer.rules.fence || function (tokens, idx, options, env, self) {
-    return self.renderToken(tokens, idx, options);
-  };
-
-  md.renderer.rules.fence = function (tokens, idx, options, env, self) {
-    const token = tokens[idx];
-    const code = token.content;
-
-    // 转义 HTML，防止代码文本里的引号等符号破坏外部的 HTML 结构
-    const escapedCode = md.utils.escapeHtml(code);
-
-    // 把转义后的代码存在 data-code 属性中，方便点击时直接获取
-    const buttonHtml = `
-      <div class="copy-icon" data-code="${escapedCode}">
-        <svg viewBox="0 0 1024 1024" width="16" height="16">
-          <path fill="currentColor" d="M768 832a128 128 0 0 1-128 128H192A128 128 0 0 1 64 832V384a128 128 0 0 1 128-128v64H192v448h448v64h128z"/>
-          <path fill="currentColor" d="M384 128a64 64 0 0 0-64 64v656a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64V338.88a64 64 0 0 0-18.88-45.28L657.28 146.88a64 64 0 0 0-45.28-18.88H384zm0-64h227.52a128 128 0 0 1 90.56 37.44l121.44 121.44a128 128 0 0 1 37.44 90.56V848a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V192a128 128 0 0 1 128-128z"/>
-        </svg>
-      </div>
-    `;
-    const renderedBlock = defaultRender(tokens, idx, options, env, self);
-    // 用一个 position: relative 的 div 包裹，以便按钮能使用 absolute 绝对定位
-    return `<div style="position: relative;">${buttonHtml}${renderedBlock}</div>`;
-  };
-
   message = message.replace(/\[(.*?)\]\((.*?)\)[。.]/g, "![$1]($2)");
   message = message.replace(/\[(.*?)\]\((.*?)\)/g, "[$1]($2)");
   message = message.replace(/(!\[[^\]]*]\(.*?\))(\S)/g, "$1\n\n$2");
@@ -143,7 +136,7 @@ const markdownRender = (message: string) => {
   htmlContent.value = md.render(message);
 };
 
-// 由于事件都委托出去了，现在 watch 只需要干一件事：重新渲染 HTML
+//监听message变化
 watch(
   () => props.message,
   (newMessage) => {
