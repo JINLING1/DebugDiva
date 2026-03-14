@@ -108,6 +108,7 @@ const handleSuggestionClick = (question: string) => {
   handleSearch({
     input: question,
   });
+  input.value = "";
 };
 //输入框文本
 const input = ref("");

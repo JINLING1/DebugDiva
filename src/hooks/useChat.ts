@@ -129,7 +129,7 @@ export function useChat() {
 	};
 
 	const updateLastAssistantMessage = () => {
-		if (assistantMessageIndex !== -1) {
+		if (streamedText.value !== '') {
 			//如果当前有正在输出的AI消息，实时更新它的内容
 			chatHistory.value[assistantMessageIndex] = {
 				message: `${streamedText.value}`,
