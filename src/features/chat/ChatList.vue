@@ -1,5 +1,5 @@
 <template>
-  <div class="main-block">
+  <div class="main-block" ref="scrollContainer">
     <!-- 欢迎消息框（当 chatHistory 为空时显示） -->
     <div v-if="chatHistory.length === 0" class="welcome-wrapper">
       <div class="welcome-message">
@@ -43,7 +43,7 @@
 
 <script setup lang="ts">
 
-import { onMounted } from "vue";
+import { ref, watch, nextTick, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import Markdown from "../../components/Markdown.vue";
 import ClipboardJS from "clipboard";
@@ -54,6 +54,8 @@ const {
   chatHistory,
   handleUpdate,
 } = useChat();
+
+const scrollContainer = ref<HTMLElement | null>(null);
 
 const isImageMessage = (message: string) => {
   // 检查是否包含 Markdown 格式的 `[点击查看](URL)`
@@ -72,6 +74,19 @@ const extractImageUrl = (message: string) => {
 const handleCopySuccess = () => {
   ElMessage.success("复制成功");
 };
+
+//监听 chatHistory 的变化将界面滚动到底部
+watch(
+  chatHistory,
+  () => {
+    nextTick(() => {
+      if (scrollContainer.value) {
+        scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight;
+      }
+    });
+  },
+  { deep: true } //开启深度监听
+);
 
 onMounted(() => {
   new ClipboardJS(".el-button[data-clipboard-text]");
