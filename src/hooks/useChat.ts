@@ -171,7 +171,7 @@ export function useChat() {
 	const handleSearch = async ({
 		input = '',
 		fileList = [],
-		userInput = '',
+		userInput = '', //用于重新生成ai回复时候，上一次的input副本
 		updateIndex,
 	}: SearchParams = {}) => {
 		if (isAssistantTyping.value) {
@@ -209,15 +209,24 @@ export function useChat() {
 		// 发送消息时，立刻同步保存到本地列表
 		saveSessionsToLocalStorage();
 
-		let messagesContent = []; // 构建请求体
+		let messagesContent: any[] = [];
 		if (fileList.length > 0) {
-			const fileId = fileList[0].url;
-			const content = JSON.stringify([
-				{ type: 'image', file_id: fileId },
-				{ type: 'text', text: input },
-			]);
+			const contentArray: any[] = fileList.map(file => {
+				// 根据文件后缀判断是否为图片
+				const isImage = file.name.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+				return {
+					type: isImage ? 'image' : 'file',
+					file_id: file.url,
+				};
+			});
+			contentArray.push({ type: 'text', text: input });
+			console.log('contentArray:', contentArray);
 			messagesContent = [
-				{ role: 'user', content: content, content_type: 'object_string' },
+				{
+					role: 'user',
+					content: JSON.stringify(contentArray),
+					content_type: 'object_string',
+				},
 			];
 		} else {
 			messagesContent = [

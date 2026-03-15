@@ -142,6 +142,7 @@ const handleKeySubmit = (event: KeyboardEvent) => {
     beforeSearch();
     handleSearch({
       input: input.value,
+      fileList: fileList.value,
     });
     input.value = "";
   }
@@ -157,6 +158,7 @@ const handleButtonClick = () => {
     // 否则执行搜索逻辑
     handleSearch({
       input: input.value,
+      fileList: fileList.value,
     });
     input.value = "";
   }
