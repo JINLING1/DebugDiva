@@ -7,9 +7,6 @@
     <div class="message-content" @click="handleContentClick" element-loading-text="加载中">
       <div v-html="htmlContent"></div>
 
-      <img v-if="!isBigger && isImage" :src="fileUrl" @click="isBigger = true" :class="{ bigger: isBigger }"
-        style="width: 100%; cursor: pointer" />
-
       <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
         <img :src="enlargedImageUrl" class="bigger-image" />
       </div>
@@ -35,15 +32,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  isImage: {
-    type: Boolean,
-    default: false,
-  },
-  fileUrl: {
-    type: String,
-    default: "",
-  },
-
 });
 
 const htmlContent = ref<string>("");

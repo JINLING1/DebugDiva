@@ -20,8 +20,7 @@
         <div class="avatar-container">
           <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
         </div>
-        <Markdown :message="chat.message" :isUserMessage="chat.isUser" :isImage="isImageMessage(chat.message)"
-          :fileUrl="extractImageUrl(chat.message)" />
+        <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
         <el-button v-if="chat.isComplete" size="small" :data-clipboard-text="chat.message.replace('Assistant: ', '')"
           ref="copyButtonsRef" @click="handleCopySuccess" class="copy-btn">
           <el-icon>
@@ -56,19 +55,6 @@ const {
 } = useChat();
 
 const scrollContainer = ref<HTMLElement | null>(null);
-
-const isImageMessage = (message: string) => {
-  // 检查是否包含 Markdown 格式的 `[点击查看](URL)`
-  return /\[.*?\]\((https?:\/\/.*?\.(jpg|jpeg|png|gif|bmp|webp|svg))\)/.test(
-    message
-  );
-};
-
-const extractImageUrl = (message: string) => {
-  // 使用正则提取 Markdown 图片 URL
-  const match = message.match(/\[.*?\]\((https?:\/\/.*?)\)/);
-  return match ? match[1] : "";
-};
 
 // 处理复制成功提示
 const handleCopySuccess = () => {
