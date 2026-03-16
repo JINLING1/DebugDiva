@@ -116,7 +116,6 @@ const markdownRender = (message: string) => {
     return;
   }
 
-  message = message.replace("链接", "图片");
   message = message.replace(/\[(.*?)\]\((.*?)\)[。.]/g, "![$1]($2)");
   message = message.replace(/\[(.*?)\]\((.*?)\)/g, "[$1]($2)");
   message = message.replace(/(!\[[^\]]*]\(.*?\))(\S)/g, "$1\n\n$2");
