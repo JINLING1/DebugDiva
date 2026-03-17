@@ -38,6 +38,8 @@ let assistantMessageIndex = -1;
 
 const isSidebarOpen = ref(true);
 
+let streamBuffer = '';
+
 export function useChat() {
 	const saveSessionsToLocalStorage = () => {
 		// 每次发生对话时，同步当前消息到会话列表中
@@ -141,30 +143,53 @@ export function useChat() {
 	};
 
 	const processStreamedData = (chunk: string) => {
-		const lines = chunk.split('\n');
-		let isDeltaEvent = false;
-		let jsonDataLine = '';
+		streamBuffer += chunk;
+
+		let eolIndex; //记录当前事件块结束的位置
+		while ((eolIndex = streamBuffer.indexOf('\n\n')) >= 0) {
+			const eventBlock = streamBuffer.slice(0, eolIndex);
+			streamBuffer = streamBuffer.slice(eolIndex + 2); //移除已处理的部分和\n\n
+
+			parseEventBlock(eventBlock);
+		}
+	};
+
+	//解析已经完整的事件块
+	const parseEventBlock = (block: string) => {
+		const lines = block.split('\n');
+		let eventType = '';
+		let eventData = '';
+
 		for (const line of lines) {
-			if (line.startsWith('event:conversation.message.delta')) {
-				isDeltaEvent = true;
-				continue;
+			if (line.startsWith('event:')) {
+				eventType = line.substring(6).trim();
+			} else if (line.startsWith('data:')) {
+				eventData = line.substring(5).trim();
 			}
-			if (isDeltaEvent && line.startsWith('data:')) {
-				jsonDataLine = line.replace('data:', '').trim();
-				isDeltaEvent = false;
-			}
-			if (jsonDataLine) {
-				try {
-					const parsedData = JSON.parse(jsonDataLine);
-					if (parsedData.role === 'assistant' && parsedData.type === 'answer') {
-						streamedText.value += parsedData.content;
-						updateLastAssistantMessage();
-					}
-				} catch (error) {
-					console.warn('JSON Parse Error:', error);
+		}
+
+		if (!eventData) return;
+
+		try {
+			if (eventType === 'conversation.message.delta') {
+				const parsedData = JSON.parse(eventData);
+				if (parsedData.role === 'assistant' && parsedData.type === 'answer') {
+					streamedText.value += parsedData.content;
+					updateLastAssistantMessage();
 				}
-				jsonDataLine = '';
+			} else if (eventType === 'conversation.message.completed') {
+				const parsedData = JSON.parse(eventData);
+				if (parsedData.type === 'answer' && parsedData.content) {
+					if (assistantMessageIndex !== -1) {
+						//收到最终完成事件，覆盖整个内容以确保不丢失字符
+						chatHistory.value[assistantMessageIndex].message =
+							parsedData.content;
+						saveSessionsToLocalStorage();
+					}
+				}
 			}
+		} catch (error) {
+			console.warn('JSON Parse Error:', error);
 		}
 	};
 
@@ -205,6 +230,7 @@ export function useChat() {
 
 		assistantMessageIndex = chatHistory.value.length - 1;
 		streamedText.value = '';
+		streamBuffer = '';
 
 		// 发送消息时，立刻同步保存到本地列表
 		saveSessionsToLocalStorage();
@@ -247,6 +273,10 @@ export function useChat() {
 					if (!isAssistantTyping.value) break;
 					const { done, value } = await reader.read();
 					if (done) {
+						if (streamBuffer.trim()) {
+							parseEventBlock(streamBuffer);
+							streamBuffer = '';
+						}
 						if (assistantMessageIndex !== -1)
 							chatHistory.value[assistantMessageIndex].isComplete = true;
 						assistantMessageIndex = -1;
@@ -255,30 +285,6 @@ export function useChat() {
 					}
 					const text = decoder.decode(value, { stream: true });
 					processStreamedData(text);
-
-					let answerValue;
-					try {
-						if (text.startsWith('event:conversation.message.completed')) {
-							const dataStartIndex = text.indexOf('data:');
-							if (dataStartIndex !== -1) {
-								const jsonString = text.substring(dataStartIndex + 5).trim();
-								if (jsonString.includes('"type":"answer"')) {
-									const parsedData = JSON.parse(jsonString);
-									if (parsedData.type === 'answer' && parsedData.content) {
-										answerValue = parsedData.content;
-									}
-								}
-							}
-						}
-					} catch (error) {
-						console.error('Failed to parse JSON:', error);
-					}
-					if (answerValue) {
-						if (assistantMessageIndex !== -1)
-							chatHistory.value[assistantMessageIndex].message = answerValue;
-						// AI 输出完最终结果后，再深拷贝保存一次完整上下文
-						saveSessionsToLocalStorage();
-					}
 					updateUI();
 				}
 			}
@@ -318,6 +324,7 @@ export function useChat() {
 		loadDataFromLocalStorage,
 		chatHistory,
 		isAssistantTyping,
+		streamBuffer,
 		handleSearch,
 		pauseSearch,
 		handleUpdate,
