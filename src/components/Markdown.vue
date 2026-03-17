@@ -16,11 +16,9 @@
 
 <script lang="ts" setup>
 import { ref, watch, onMounted } from "vue";
-import MarkdownIt from "markdown-it";
-import hljs from "highlight.js";
-import "highlight.js/styles/atom-one-dark.css";
 import { ElMessage } from "element-plus";
-import multiMdTable from "markdown-it-multimd-table";
+import { renderSafeMarkdown } from "../utils/markdownHelper.ts";
+import "highlight.js/styles/atom-one-dark.css";
 
 const props = defineProps({
   message: {
@@ -35,59 +33,13 @@ const props = defineProps({
 });
 
 const htmlContent = ref<string>("");
-
-//用于控制放大的状态
 const isBigger = ref<boolean>(false);
 const enlargedImageUrl = ref<string>("");
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  breaks: true,
-  highlight: function (str: string, lang: string) {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        //在解析 Markdown时，直接把高亮的 HTML 标签加上
-        return hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
-      } catch (__) { }
-    }
-    return '';
-  }
-}).use(multiMdTable);
-
-//提取原生的 fence 渲染方法
-const defaultRender = md.renderer.rules.fence || function (tokens: any, idx: any, options: any, env: any, self: { renderToken: (arg0: any, arg1: any, arg2: any) => any; }) {
-  return self.renderToken(tokens, idx, options);
-};
-
-//拦截 fence，加上复制按钮
-md.renderer.rules.fence = function (tokens: { [x: string]: any; }, idx: string | number, options: any, env: any, self: any) {
-  const token = tokens[idx];
-  const code = token.content;
-
-  const escapedCode = md.utils.escapeHtml(code);
-
-  const buttonHtml = `
-    <div class="copy-icon" data-code="${escapedCode}">
-      <svg viewBox="0 0 1024 1024" width="16" height="16">
-        <path fill="currentColor" d="M768 832a128 128 0 0 1-128 128H192A128 128 0 0 1 64 832V384a128 128 0 0 1 128-128v64H192v448h448v64h128z"/>
-        <path fill="currentColor" d="M384 128a64 64 0 0 0-64 64v656a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64V338.88a64 64 0 0 0-18.88-45.28L657.28 146.88a64 64 0 0 0-45.28-18.88H384zm0-64h227.52a128 128 0 0 1 90.56 37.44l121.44 121.44a128 128 0 0 1 37.44 90.56V848a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V192a128 128 0 0 1 128-128z"/>
-      </svg>
-    </div>
-  `;
-  const renderedBlock = defaultRender(tokens, idx, options, env, self);
-
-
-  return `<div class="code-block-wrapper hljs" style="position: relative;">${buttonHtml}${renderedBlock}</div>`;
-};
-
-
-//统一的事件委托处理函数
+//负责处理图片点击放大和复制代码
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
 
-  //复制按钮
   const copyBtn = target.closest(".copy-icon");
   if (copyBtn) {
     const code = copyBtn.getAttribute("data-code");
@@ -101,38 +53,23 @@ const handleContentClick = (event: MouseEvent) => {
     return;
   }
 
-  //图片点击放大
   if (target.tagName === "IMG" && !target.classList.contains("bigger-image")) {
     const imgEl = target as HTMLImageElement;
-    enlargedImageUrl.value = imgEl.src; // 使用独立的放大变量
+    enlargedImageUrl.value = imgEl.src;
     isBigger.value = true;
   }
 };
 
-//渲染markdown消息
-const markdownRender = (message: string) => {
-  if (!message) {
-    htmlContent.value = "";
-    return;
-  }
-
-  message = message.replace(/\[(.*?)\]\((.*?)\)[。.]/g, "![$1]($2)");
-  message = message.replace(/\[(.*?)\]\((.*?)\)/g, "[$1]($2)");
-  message = message.replace(/(!\[[^\]]*]\(.*?\))(\S)/g, "$1\n\n$2");
-
-  htmlContent.value = md.render(message);
-};
-
-//监听message变化
+//监听 message 变化，进行渲染
 watch(
   () => props.message,
   (newMessage) => {
-    markdownRender(newMessage);
+    htmlContent.value = renderSafeMarkdown(newMessage);
   }
 );
 
 onMounted(() => {
-  markdownRender(props.message);
+  htmlContent.value = renderSafeMarkdown(props.message);
 });
 </script>
 

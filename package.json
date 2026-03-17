@@ -23,6 +23,7 @@
     "vuex": "^4.0.2"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.2.0",
     "@types/lodash": "^4.17.14",
     "@types/markdown-it": "^14.1.2",
     "@typescript-eslint/eslint-plugin": "^8.21.0",
