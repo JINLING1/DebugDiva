@@ -144,6 +144,7 @@ const handleKeySubmit = (event: KeyboardEvent) => {
       input: input.value,
       fileList: fileList.value,
     });
+    fileList.value = [];
     input.value = "";
   }
 };
@@ -160,6 +161,7 @@ const handleButtonClick = () => {
       input: input.value,
       fileList: fileList.value,
     });
+    fileList.value = [];
     input.value = "";
   }
 };
