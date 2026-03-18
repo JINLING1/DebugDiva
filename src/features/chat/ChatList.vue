@@ -28,7 +28,8 @@
           </el-icon>
         </el-button>
         <!-- 更新按钮 -->
-        <el-button v-if="chat.isComplete" size="small" @click="handleUpdate(index)" class="update-btn">
+        <el-button v-if="chat.isComplete && index === chatHistory.length - 1" size="small" @click="handleUpdate(index)"
+          class="update-btn">
           <el-icon style="font-size: 16px">
             <Refresh />
           </el-icon>

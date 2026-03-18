@@ -132,12 +132,8 @@ export function useChat() {
 
 	const updateLastAssistantMessage = () => {
 		if (streamedText.value !== '') {
-			//如果当前有正在输出的AI消息，实时更新它的内容
-			chatHistory.value[assistantMessageIndex] = {
-				message: `${streamedText.value}`,
-				isUser: false,
-				isComplete: false,
-			};
+			//如果有正在输出的AI消息，实时更新内容
+			chatHistory.value[assistantMessageIndex].message = streamedText.value;
 			updateUI();
 		}
 	};
@@ -184,6 +180,7 @@ export function useChat() {
 						//收到最终完成事件，覆盖整个内容以确保不丢失字符
 						chatHistory.value[assistantMessageIndex].message =
 							parsedData.content;
+						chatHistory.value[assistantMessageIndex].isComplete = true;
 						saveSessionsToLocalStorage();
 					}
 				}
@@ -215,6 +212,7 @@ export function useChat() {
 			const chat = chatHistory.value[updateIndex];
 			chat.message = '<div class="loading-spinner"></div>';
 			chat.isComplete = false;
+			assistantMessageIndex = updateIndex;
 		} else {
 			chatHistory.value.push({
 				message: `${input}`,
@@ -226,9 +224,9 @@ export function useChat() {
 				isUser: false,
 				isComplete: false,
 			});
+			assistantMessageIndex = chatHistory.value.length - 1;
 		}
 
-		assistantMessageIndex = chatHistory.value.length - 1;
 		streamedText.value = '';
 		streamBuffer = '';
 
@@ -270,7 +268,14 @@ export function useChat() {
 			if (reader) {
 				const decoder = new TextDecoder();
 				while (true) {
-					if (!isAssistantTyping.value) break;
+					if (!isAssistantTyping.value) {
+						if (assistantMessageIndex !== -1) {
+							chatHistory.value[assistantMessageIndex].isComplete = true;
+							saveSessionsToLocalStorage();
+						}
+						assistantMessageIndex = -1;
+						break;
+					}
 					const { done, value } = await reader.read();
 					if (done) {
 						if (streamBuffer.trim()) {
@@ -290,6 +295,11 @@ export function useChat() {
 			}
 		} catch (error) {
 			isAssistantTyping.value = false;
+			if (assistantMessageIndex !== -1) {
+				chatHistory.value[assistantMessageIndex].isComplete = true;
+				saveSessionsToLocalStorage();
+			}
+			assistantMessageIndex = -1;
 		}
 	};
 
