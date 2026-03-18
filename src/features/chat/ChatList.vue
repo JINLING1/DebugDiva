@@ -21,8 +21,8 @@
           <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
         </div>
         <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
-        <el-button v-if="chat.isComplete" size="small" :data-clipboard-text="chat.message.replace('Assistant: ', '')"
-          ref="copyButtonsRef" @click="handleCopySuccess" class="copy-btn">
+        <!-- 复制按钮 -->
+        <el-button v-if="chat.isComplete" size="small" @click="copyFullMessage(chat.message)" class="copy-btn">
           <el-icon>
             <CopyDocument />
           </el-icon>
@@ -46,7 +46,6 @@
 import { ref, watch, nextTick, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import Markdown from "../../components/Markdown.vue";
-import ClipboardJS from "clipboard";
 import { CopyDocument, Refresh } from "@element-plus/icons-vue";
 import { useChat } from '../../hooks/useChat'
 
@@ -57,9 +56,14 @@ const {
 
 const scrollContainer = ref<HTMLElement | null>(null);
 
-// 处理复制成功提示
-const handleCopySuccess = () => {
-  ElMessage.success("复制成功");
+const copyFullMessage = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success("复制成功");
+  } catch (error) {
+    ElMessage.error("复制失败");
+    console.error("Clipboard error:", error);
+  }
 };
 
 //监听 chatHistory 的变化将界面滚动到底部
@@ -75,9 +79,6 @@ watch(
   { deep: true } //开启深度监听
 );
 
-onMounted(() => {
-  new ClipboardJS(".el-button[data-clipboard-text]");
-});
 
 </script>
 
