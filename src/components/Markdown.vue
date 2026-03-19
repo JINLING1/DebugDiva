@@ -17,7 +17,7 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted } from "vue";
 import { ElMessage } from "element-plus";
-import { renderSafeMarkdown } from "../utils/markdownHelper.ts";
+import { renderSafeMarkdown, codeCacheMap } from "../utils/markdownHelper.ts";
 import "highlight.js/styles/atom-one-dark.css";
 
 const props = defineProps({
@@ -42,9 +42,11 @@ const handleContentClick = (event: MouseEvent) => {
 
   const copyBtn = target.closest(".copy-icon");
   if (copyBtn) {
-    const code = copyBtn.getAttribute("data-code");
-    if (code) {
-      navigator.clipboard.writeText(code).then(() => {
+    const codeId = copyBtn.getAttribute("data-id");
+    //从Map中获取代码
+    if (codeId && codeCacheMap.has(codeId)) {
+      const rawCode = codeCacheMap.get(codeId);
+      navigator.clipboard.writeText(rawCode!).then(() => {
         ElMessage.success("复制成功");
       }).catch(() => {
         ElMessage.error("复制失败");
