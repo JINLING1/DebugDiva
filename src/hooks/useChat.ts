@@ -109,9 +109,8 @@ export function useChat() {
 		);
 		if (currentSessionId.value === id) {
 			startNewChat(); // 如果删的是当前正在聊的，自动重置为空白新对话
-		} else {
-			localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
 		}
+		localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
 	};
 
 	const updateSessionTitle = (id: string, newTitle: string) => {
