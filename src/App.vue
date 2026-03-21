@@ -21,13 +21,16 @@
 
 <script lang="ts" setup>
 import "highlight.js/styles/default.css"; // 引入默认的高亮样式
+import { storeToRefs } from 'pinia';
 import Welcome from "./UI/Welcome.vue";
-import History from "./features/History/History.vue";
+import History from "./features/history/History.vue";
 import ChatList from "./features/chat/ChatList.vue";
 import Input from "./features/input/Input.vue";
-import { useChat } from './hooks/useChat';
+import { useChatStore } from './store/chat';
 
-const { isSidebarOpen } = useChat(); // 获取侧边栏状态
+const chatStore = useChatStore();
+const { isSidebarOpen } = storeToRefs(chatStore);
+
 </script>
 
 

@@ -11,10 +11,12 @@
 </template>
 
 <script lang="ts" setup>
+import { storeToRefs } from 'pinia';
 import { Fold, Expand } from '@element-plus/icons-vue';
-import { useChat } from '../hooks/useChat';
+import { useChatStore } from '../store/chat';
 
-const { isSidebarOpen } = useChat();
+const chatStore = useChatStore();
+const { isSidebarOpen } = storeToRefs(chatStore);
 </script>
 
 <style scoped>

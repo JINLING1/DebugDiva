@@ -63,18 +63,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from "vue";
+import { storeToRefs } from 'pinia';
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { UploadProps } from "element-plus";
-import { useChat } from '../../hooks/useChat'
+import { useChatStore } from '../../store/chat';
+
+
 import { useFile } from '../../hooks/useFile'
 
-const {
-  loadDataFromLocalStorage,
-  isAssistantTyping,
-  handleSearch,
-  pauseSearch,
-  chatHistory,
-} = useChat();
+const chatStore = useChatStore();
+const { isAssistantTyping, chatHistory } = storeToRefs(chatStore);
+const { loadDataFromLocalStorage, handleSearch, pauseSearch } = chatStore;
+
 const { fileList, handleFileDelete, handleFileChange } = useFile();
 
 // 添加对话框状态类型

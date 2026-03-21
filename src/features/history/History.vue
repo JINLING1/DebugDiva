@@ -39,16 +39,14 @@
 
 <script lang="ts" setup>
 import { ref, nextTick } from 'vue';
-import { useChat } from '../../hooks/useChat';
+import { storeToRefs } from 'pinia';
+import { useChatStore } from '../../store/chat';
 
-const {
-  chatSessions,
-  currentSessionId,
-  startNewChat,
-  switchSession,
-  deleteSession,
-  updateSessionTitle
-} = useChat();
+
+const chatStore = useChatStore();
+const { chatSessions, currentSessionId } = storeToRefs(chatStore);
+const { startNewChat, switchSession, updateSessionTitle, deleteSession } = chatStore;
+
 
 const editingId = ref<string | null>(null);
 const editTitleText = ref('');

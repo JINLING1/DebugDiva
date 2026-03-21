@@ -44,15 +44,16 @@
 <script setup lang="ts">
 
 import { ref, watch, nextTick, onMounted } from "vue";
+import { storeToRefs } from 'pinia';
 import { ElMessage } from "element-plus";
-import Markdown from "../../components/Markdown.vue";
 import { CopyDocument, Refresh } from "@element-plus/icons-vue";
-import { useChat } from '../../hooks/useChat'
+import Markdown from "../../components/Markdown.vue";
+import { useChatStore } from '../../store/chat';
 
-const {
-  chatHistory,
-  handleUpdate,
-} = useChat();
+
+const chatStore = useChatStore();
+const { chatHistory } = storeToRefs(chatStore);
+const { handleUpdate } = chatStore;
 
 const scrollContainer = ref<HTMLElement | null>(null);
 

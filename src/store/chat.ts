@@ -1,16 +1,15 @@
+import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UploadUserFile } from 'element-plus';
 import { cozeApi } from '../api/coze';
 
-//聊天消息
 export interface ChatMessage {
 	message: string;
 	isUser: boolean;
 	isComplete: boolean;
 }
 
-//聊天会话
 export interface ChatSession {
 	id: string;
 	title: string;
@@ -25,39 +24,32 @@ interface SearchParams {
 	updateIndex?: number;
 }
 
-const chatSessions = ref<ChatSession[]>([]);
-const currentSessionId = ref<string | null>(null); // 记录当前会话id
-const chatHistory = ref<ChatMessage[]>([]); // 当前会话的聊天记录
+export const useChatStore = defineStore('chat', () => {
+	const chatSessions = ref<ChatSession[]>([]);
+	const currentSessionId = ref<string | null>(null);
+	const chatHistory = ref<ChatMessage[]>([]);
+	const isAssistantTyping = ref(false);
+	const isSidebarOpen = ref(true);
 
-const isAssistantTyping = ref(false);
-const abortController = ref<AbortController | null>(null);
+	const abortController = ref<AbortController | null>(null);
+	const streamedOutput = ref('');
+	const streamedText = ref('');
+	let assistantMessageIndex = -1;
+	let streamBuffer = '';
 
-const streamedOutput = ref('');
-const streamedText = ref('');
-let assistantMessageIndex = -1;
-
-const isSidebarOpen = ref(true);
-
-let streamBuffer = '';
-
-export function useChat() {
 	const saveSessionsToLocalStorage = () => {
-		// 每次发生对话时，同步当前消息到会话列表中
 		if (chatHistory.value.length > 0) {
 			if (!currentSessionId.value) {
-				// 如果是新会话，自动生成ID且取用户的第一句话作为标题
 				currentSessionId.value = Date.now().toString();
 				chatSessions.value.unshift({
-					//向chatSessions开头添加新会话
 					id: currentSessionId.value,
 					title:
 						chatHistory.value[0].message.slice(0, 15) +
 						(chatHistory.value[0].message.length > 15 ? '...' : ''),
 					date: new Date().toISOString(),
-					messages: JSON.parse(JSON.stringify(chatHistory.value)), // 深拷贝防污染
+					messages: JSON.parse(JSON.stringify(chatHistory.value)),
 				});
 			} else {
-				// 如果是已有会话，更新对应session的消息列表
 				const session = chatSessions.value.find(
 					targetSession => targetSession.id === currentSessionId.value,
 				);
@@ -74,26 +66,21 @@ export function useChat() {
 		if (storedData) {
 			chatSessions.value = JSON.parse(storedData);
 		}
-		// 每次刷新页面，默认准备好一个干净的新会话
 		startNewChat();
 	};
 
-	//重置会话状态
 	const startNewChat = () => {
-		if (isAssistantTyping.value)
-			return ElMessage.warning(
-				'The assistant is outputting, please try again later.',
-			);
+		if (isAssistantTyping.value) {
+			return ElMessage.warning('AI正在输出，请稍后再试。');
+		}
 		currentSessionId.value = null;
 		chatHistory.value = [];
 	};
 
-	//切换会话
 	const switchSession = (id: string) => {
-		if (isAssistantTyping.value)
-			return ElMessage.warning(
-				'The assistant is outputting, please try again later.',
-			);
+		if (isAssistantTyping.value) {
+			return ElMessage.warning('AI正在输出，请稍后再试。');
+		}
 		const session = chatSessions.value.find(
 			targetSession => targetSession.id === id,
 		);
@@ -108,7 +95,7 @@ export function useChat() {
 			targetSession => targetSession.id !== id,
 		);
 		if (currentSessionId.value === id) {
-			startNewChat(); // 如果删的是当前正在聊的，自动重置为空白新对话
+			startNewChat();
 		}
 		localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
 	};
@@ -131,25 +118,11 @@ export function useChat() {
 
 	const updateLastAssistantMessage = () => {
 		if (streamedText.value !== '') {
-			//如果有正在输出的AI消息，实时更新内容
 			chatHistory.value[assistantMessageIndex].message = streamedText.value;
 			updateUI();
 		}
 	};
 
-	const processStreamedData = (chunk: string) => {
-		streamBuffer += chunk;
-
-		let eolIndex; //记录当前事件块结束的位置
-		while ((eolIndex = streamBuffer.indexOf('\n\n')) >= 0) {
-			const eventBlock = streamBuffer.slice(0, eolIndex);
-			streamBuffer = streamBuffer.slice(eolIndex + 2); //移除已处理的部分和\n\n
-
-			parseEventBlock(eventBlock);
-		}
-	};
-
-	//解析已经完整的事件块
 	const parseEventBlock = (block: string) => {
 		const lines = block.split('\n');
 		let eventType = '';
@@ -176,7 +149,6 @@ export function useChat() {
 				const parsedData = JSON.parse(eventData);
 				if (parsedData.type === 'answer' && parsedData.content) {
 					if (assistantMessageIndex !== -1) {
-						//收到最终完成事件，覆盖整个内容以确保不丢失字符
 						chatHistory.value[assistantMessageIndex].message =
 							parsedData.content;
 						chatHistory.value[assistantMessageIndex].isComplete = true;
@@ -189,18 +161,28 @@ export function useChat() {
 		}
 	};
 
+	const processStreamedData = (chunk: string) => {
+		streamBuffer += chunk;
+		let eolIndex;
+		while ((eolIndex = streamBuffer.indexOf('\n\n')) >= 0) {
+			const eventBlock = streamBuffer.slice(0, eolIndex);
+			streamBuffer = streamBuffer.slice(eolIndex + 2);
+			parseEventBlock(eventBlock);
+		}
+	};
+
 	const handleSearch = async ({
 		input = '',
 		fileList = [],
-		userInput = '', //用于重新生成ai回复时候，上一次的input副本
+		userInput = '',
 		updateIndex,
 	}: SearchParams = {}) => {
 		if (isAssistantTyping.value) {
-			ElMessage.warning('The assistant is outputting, please try again later.');
+			ElMessage.warning('AI正在输出，请稍后再试。');
 			return;
 		}
 		if (!input.trim() && !userInput) {
-			ElMessage.error('Input cannot be empty or just spaces!');
+			ElMessage.error('输入不能为空！');
 			return;
 		}
 		if (userInput) input = userInput;
@@ -228,14 +210,11 @@ export function useChat() {
 
 		streamedText.value = '';
 		streamBuffer = '';
-
-		// 发送消息时，立刻同步保存到本地列表
 		saveSessionsToLocalStorage();
 
 		let messagesContent: any[] = [];
 		if (fileList.length > 0) {
 			const contentArray: any[] = fileList.map(file => {
-				// 根据文件后缀判断是否为图片
 				const isImage = file.name.match(/\.(jpg|jpeg|png|gif|webp)$/i);
 				return {
 					type: isImage ? 'image' : 'file',
@@ -243,7 +222,6 @@ export function useChat() {
 				};
 			});
 			contentArray.push({ type: 'text', text: input });
-			console.log('contentArray:', contentArray);
 			messagesContent = [
 				{
 					role: 'user',
@@ -259,7 +237,6 @@ export function useChat() {
 
 		try {
 			abortController.value = new AbortController();
-
 			const reader = await cozeApi.chatStream(
 				messagesContent,
 				abortController.value.signal,
@@ -305,7 +282,7 @@ export function useChat() {
 	const pauseSearch = () => {
 		if (abortController.value) abortController.value.abort();
 		isAssistantTyping.value = false;
-		ElMessage.success('Paused assistant output.');
+		ElMessage.success('已暂停AI输出。');
 	};
 
 	const handleUpdate = async (index: number) => {
@@ -326,17 +303,16 @@ export function useChat() {
 	return {
 		chatSessions,
 		currentSessionId,
+		chatHistory,
+		isAssistantTyping,
+		isSidebarOpen,
 		startNewChat,
 		switchSession,
 		deleteSession,
 		updateSessionTitle,
 		loadDataFromLocalStorage,
-		chatHistory,
-		isAssistantTyping,
-		streamBuffer,
 		handleSearch,
 		pauseSearch,
 		handleUpdate,
-		isSidebarOpen,
 	};
-}
+});
