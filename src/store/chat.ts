@@ -5,6 +5,7 @@ import type { UploadUserFile } from 'element-plus';
 import { cozeApi } from '../api/coze';
 
 export interface ChatMessage {
+	id: string;
 	message: string;
 	isUser: boolean;
 	isComplete: boolean;
@@ -196,11 +197,13 @@ export const useChatStore = defineStore('chat', () => {
 			assistantMessageIndex = updateIndex;
 		} else {
 			chatHistory.value.push({
+				id: `msg-${Date.now()}-user`,
 				message: `${input}`,
 				isUser: true,
 				isComplete: false,
 			});
 			chatHistory.value.push({
+				id: `msg-${Date.now()}-ai`,
 				message: '<div class="loading-spinner"></div>',
 				isUser: false,
 				isComplete: false,

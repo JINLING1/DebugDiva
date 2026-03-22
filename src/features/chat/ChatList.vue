@@ -1,6 +1,5 @@
 <template>
-  <div class="main-block" ref="scrollContainer">
-    <!-- 欢迎消息框（当 chatHistory 为空时显示） -->
+  <div class="main-block">
     <div v-if="chatHistory.length === 0" class="welcome-wrapper">
       <div class="welcome-message">
         <div class="avatar-container">
@@ -12,50 +11,54 @@
         </p>
       </div>
     </div>
-    <!-- 聊天部分 -->
-    <div v-for="(chat, index) in chatHistory" :key="index">
-      <!-- ai消息 -->
-      <div v-if="!chat.isUser" class="assistant-message-container">
-        <!-- 添加头像 -->
-        <div class="avatar-container">
-          <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
-        </div>
-        <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
-        <!-- 复制按钮 -->
-        <el-button v-if="chat.isComplete" size="small" @click="copyFullMessage(chat.message)" class="copy-btn">
-          <el-icon>
-            <CopyDocument />
-          </el-icon>
-        </el-button>
-        <!-- 更新按钮 -->
-        <el-button v-if="chat.isComplete && index === chatHistory.length - 1" size="small" @click="handleUpdate(index)"
-          class="update-btn">
-          <el-icon style="font-size: 16px">
-            <Refresh />
-          </el-icon>
-          <!-- 使用刷新图标 -->
-        </el-button>
-      </div>
-      <Markdown v-else :message="chat.message" :isUserMessage="chat.isUser" />
-    </div>
+
+    <DynamicScroller v-else ref="scrollerRef" class="scroller" :items="chatHistory" :min-item-size="80" key-field="id">
+      <template #default="{ item: chat, index, active }">
+        <DynamicScrollerItem :item="chat" :active="active" :size-dependencies="[chat.message]" :data-index="index">
+          <div class="message-row">
+            <!-- AI消息 -->
+            <div v-if="!chat.isUser" class="assistant-message-container">
+              <div class="avatar-container">
+                <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
+              </div>
+
+              <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
+
+              <el-button v-if="chat.isComplete" size="small" @click="copyFullMessage(chat.message)" class="copy-btn">
+                <el-icon>
+                  <CopyDocument />
+                </el-icon>
+              </el-button>
+              <el-button v-if="chat.isComplete && index === chatHistory.length - 1" size="small"
+                @click="handleUpdate(index)" class="update-btn">
+                <el-icon style="font-size: 16px">
+                  <Refresh />
+                </el-icon>
+              </el-button>
+            </div>
+            <!-- 用户消息 -->
+            <Markdown v-else :message="chat.message" :isUserMessage="chat.isUser" />
+          </div>
+        </DynamicScrollerItem>
+      </template>
+    </DynamicScroller>
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { ref, watch, nextTick, onMounted } from "vue";
+import { ref, watch, nextTick } from "vue";
 import { storeToRefs } from 'pinia';
 import { ElMessage } from "element-plus";
 import { CopyDocument, Refresh } from "@element-plus/icons-vue";
 import Markdown from "../../components/Markdown.vue";
 import { useChatStore } from '../../store/chat';
 
-
 const chatStore = useChatStore();
 const { chatHistory } = storeToRefs(chatStore);
 const { handleUpdate } = chatStore;
 
-const scrollContainer = ref<HTMLElement | null>(null);
+const scrollerRef = ref<any>(null);
 
 const copyFullMessage = async (text: string) => {
   try {
@@ -69,17 +72,18 @@ const copyFullMessage = async (text: string) => {
 
 //监听 chatHistory 的变化将界面滚动到底部
 watch(
-  chatHistory,
+  () => chatHistory.value,
   () => {
     nextTick(() => {
-      if (scrollContainer.value) {
-        scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight;
+      if (scrollerRef.value && scrollerRef.value.$el) {
+        //获取虚拟列表底层的DOM元素进行滚动
+        const el = scrollerRef.value.$el;
+        el.scrollTop = el.scrollHeight;
       }
     });
   },
-  { deep: true } //开启深度监听
+  { deep: true }
 );
-
 
 </script>
 
@@ -91,7 +95,9 @@ watch(
   padding: 10px;
   overflow-y: auto;
   height: 100%;
+  width: 100%;
 }
+
 
 .welcome-wrapper {
   display: flex;
@@ -99,7 +105,6 @@ watch(
   height: 50%;
   width: 80%;
 }
-
 
 /* 欢迎页 */
 .welcome-message {
@@ -111,8 +116,11 @@ watch(
   text-align: left;
   font-size: 30px;
   margin-bottom: 15px;
-  /* 调整格式所需，记得删除 */
   border: 1px solid #000000;
+}
+
+.message-row {
+  padding-bottom: 30px;
 }
 
 /* 头像 */
@@ -125,6 +133,7 @@ watch(
   overflow: hidden;
   /* 头像和文本之间的间距 */
   margin-right: 10px;
+  flex-shrink: 0;
 }
 
 .avatar {
@@ -141,7 +150,6 @@ watch(
 .assistant-message-container {
   display: flex;
   position: relative;
-  margin-bottom: 50px;
 }
 
 .copy-btn {
