@@ -59,7 +59,7 @@ body {
   width: 260px;
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   background-color: #f3f4f6;
-  /* overflow: hidden; */
+  overflow: hidden !important;
 }
 
 .el-aside.is-collapsed {
@@ -72,7 +72,7 @@ body {
 
 .el-main {
   flex: 1;
-  overflow-y: hidden;
-  padding: 0;
+  overflow: hidden !important;
+  padding: 0px !important;
 }
 </style>

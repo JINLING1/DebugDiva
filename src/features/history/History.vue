@@ -81,7 +81,8 @@ const handleDelete = (id: string) => {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e4e7ed;
-  overflow-x: hidden;
+  overflow: hidden;
+  box-sizing: border-box
 }
 
 .new-chat-wrapper {
@@ -165,5 +166,26 @@ const handleDelete = (id: string) => {
 
 .delete-icon:hover {
   color: #f56c6c;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.session-list::-webkit-scrollbar-button {
+  display: none !important;
+}
+
+.session-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  background: #d2d3d6;
+  border-radius: 4px;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background: #a9adb4;
 }
 </style>

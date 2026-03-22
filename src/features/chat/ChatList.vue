@@ -92,10 +92,11 @@ watch(
   display: flex;
   flex-direction: column;
   flex: 1;
-  padding: 10px;
+  padding: 0px 0px 15px;
   overflow-y: auto;
   height: 100%;
   width: 100%;
+  box-sizing: border-box;
 }
 
 
@@ -194,5 +195,30 @@ watch(
 
 strong {
   font-weight: bold;
+}
+
+.scroller::-webkit-scrollbar {
+  width: 6px;
+  display: block;
+}
+
+.scroller::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0;
+  height: 0;
+}
+
+.scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroller::-webkit-scrollbar-thumb {
+  background: #d2d3d6;
+  border-radius: 4px;
+}
+
+/* 鼠标悬停在滑块上时的颜色 */
+.scroller::-webkit-scrollbar-thumb:hover {
+  background: #a9adb4;
 }
 </style>
