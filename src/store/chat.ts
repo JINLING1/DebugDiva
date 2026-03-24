@@ -285,6 +285,19 @@ export const useChatStore = defineStore('chat', () => {
 	const pauseSearch = () => {
 		if (abortController.value) abortController.value.abort();
 		isAssistantTyping.value = false;
+		
+		if (assistantMessageIndex !== -1 && chatHistory.value[assistantMessageIndex]) {
+			const chat = chatHistory.value[assistantMessageIndex];
+			if (chat.message === '<div class="loading-spinner"></div>') {
+				chat.message = '已停止回复';
+			} else {
+				chat.message += '\n\n*(已停止回复)*';
+			}
+			chat.isComplete = true;
+			saveSessionsToLocalStorage();
+			assistantMessageIndex = -1;
+		}
+		
 		ElMessage.success('已暂停AI输出。');
 	};
 

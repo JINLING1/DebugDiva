@@ -75,11 +75,16 @@ watch(
   () => chatHistory.value,
   () => {
     nextTick(() => {
-      if (scrollerRef.value && scrollerRef.value.$el) {
-        //获取虚拟列表底层的DOM元素进行滚动
-        const el = scrollerRef.value.$el;
-        el.scrollTop = el.scrollHeight;
-      }
+      setTimeout(() => {
+        if (scrollerRef.value) {
+          if (typeof scrollerRef.value.scrollToBottom === 'function') {
+            scrollerRef.value.scrollToBottom();
+          } else if (scrollerRef.value.$el) {
+            const el = scrollerRef.value.$el;
+            el.scrollTop = el.scrollHeight;
+          }
+        }
+      }, 50);
     });
   },
   { deep: true }
@@ -92,7 +97,7 @@ watch(
   display: flex;
   flex-direction: column;
   flex: 1;
-  padding: 0px 0px 15px;
+  padding: 0px 0px 40px;
   overflow-y: auto;
   height: 100%;
   width: 100%;
@@ -147,6 +152,7 @@ watch(
 .assistant-message-container {
   display: flex;
   position: relative;
+  padding-bottom: 25px;
 }
 
 .el-icon {
@@ -181,8 +187,13 @@ watch(
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .loading-spinner {

@@ -250,7 +250,6 @@ onMounted(() => {
   box-shadow: 0 -4px 18px rgba(64, 158, 255, 0.12);
 }
 
-/* 清除el-textarea的默认边框（即内阴影）*/
 :deep(.inner-input .el-textarea__inner) {
   box-shadow: none !important;
 }

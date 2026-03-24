@@ -7,9 +7,14 @@
     <div class="message-content" @click="handleContentClick" element-loading-text="加载中">
       <div v-html="htmlContent"></div>
 
-      <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
-        <img :src="enlargedImageUrl" class="bigger-image" />
-      </div>
+      <teleport to=".right-container">
+        <transition name="fade">
+          <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
+            <div class="blur-background" :style="{ backgroundImage: `url(${enlargedImageUrl})` }"></div>
+            <img :src="enlargedImageUrl" class="bigger-image" />
+          </div>
+        </transition>
+      </teleport>
     </div>
   </div>
 </template>
@@ -112,13 +117,12 @@ onMounted(() => {
   font-weight: bold;
 }
 
-/* 设置偶数行和奇数行的背景色 */
-:deep(.message-content tr:nth-child(odd)) {
-  background-color: #ffffff;
-}
-
-:deep(.message-content tr:nth-child(even)) {
-  background-color: #f1f8e9;
+:deep(.message-content img:not(.bigger-image)) {
+  max-width: 100%;
+  border-radius: 8px;
+  cursor: zoom-in;
+  margin: 10px 0;
+  display: block;
 }
 
 .user-message {
@@ -141,7 +145,6 @@ onMounted(() => {
   padding: 0;
 }
 
-/* AI消息靠左显示 */
 .ai-message {
   margin-left: 0;
   margin-right: auto;
@@ -162,24 +165,50 @@ onMounted(() => {
 
 /* 放大图片时的遮罩 */
 .bigger-overlay {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: rgba(0, 0, 0, 0.5);
+  width: 100%;
+  height: 100%;
+  background-color: #000;
   display: flex;
   justify-content: center;
   align-items: center;
-  cursor: pointer;
+  cursor: zoom-out;
   z-index: 9999;
+  overflow: hidden;
+}
+
+.blur-background {
+  position: absolute;
+  top: -5%;
+  left: -5%;
+  width: 110%;
+  height: 110%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(40px) brightness(0.4);
+  z-index: 1;
 }
 
 .bigger-image {
-  max-width: 80%;
-  max-height: 80%;
+  width: 100%;
+  height: 100%;
+  padding: 40px;
+  box-sizing: border-box;
   object-fit: contain;
-  z-index: 9999;
+  z-index: 2;
+  filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.5));
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 :deep(.hljs) {
