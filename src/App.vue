@@ -22,7 +22,7 @@
 <script lang="ts" setup>
 import "highlight.js/styles/default.css"; // 引入默认的高亮样式
 import { storeToRefs } from 'pinia';
-import Nav from "./ui/Nav.vue";
+import Nav from "./components/Nav.vue";
 import History from "./features/history/History.vue";
 import ChatList from "./features/chat/ChatList.vue";
 import Input from "./features/input/Input.vue";

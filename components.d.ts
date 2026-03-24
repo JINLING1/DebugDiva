@@ -22,6 +22,7 @@ declare module 'vue' {
     ElUpload: typeof import('element-plus/es')['ElUpload']
     InlineDialog: typeof import('./src/components/InlineDialog.vue')['default']
     Markdown: typeof import('./src/components/Markdown.vue')['default']
+    Nav: typeof import('./src/components/Nav.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }
