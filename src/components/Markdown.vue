@@ -18,7 +18,7 @@
 import { ref, watch, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { renderSafeMarkdown, codeCacheMap } from "../utils/markdownHelper.ts";
-import "highlight.js/styles/atom-one-dark.css";
+import "highlight.js/styles/github.css";
 
 const props = defineProps({
   message: {
@@ -121,28 +121,34 @@ onMounted(() => {
   background-color: #f1f8e9;
 }
 
-/* 用户消息靠右显示 */
 .user-message {
   margin-left: auto;
-  margin-right: 20px;
-  background-color: #e0f7fa;
-  border: 1px solid #b2ebf2;
+  margin-right: 0;
+  max-width: 85%;
+  background-color: #f4f6f8;
+  border: none;
   border-radius: 10px;
-  padding: 0 20px;
-  max-width: 70%;
+  padding: 8px 16px;
   width: fit-content;
   text-align: left;
   word-break: break-word;
+  line-height: 1.5;
+}
+
+/* 去除 Markdown 渲染默认的段落外边距，防止撑高气泡 */
+.user-message :deep(p) {
+  margin: 0;
+  padding: 0;
 }
 
 /* AI消息靠左显示 */
 .ai-message {
+  margin-left: 0;
   margin-right: auto;
-  background-color: #f1f8e9;
-  border: 1px solid #c5e1a5;
+  background-color: transparent;
   border-radius: 10px;
-  padding: 0 20px 15px 20px;
-  max-width: 70%;
+  padding: 12px 20px;
+  max-width: 100%;
   margin: 5px 0;
   width: fit-content;
   text-align: left;
@@ -174,6 +180,16 @@ onMounted(() => {
   max-height: 80%;
   object-fit: contain;
   z-index: 9999;
+}
+
+:deep(.hljs) {
+  background-color: #cfcfcf2f !important;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+:deep(pre) {
+  margin: 10px 0;
 }
 
 /* 复制按钮样式 */

@@ -18,6 +18,7 @@ declare module 'vue' {
     ElMain: typeof import('element-plus/es')['ElMain']
     ElPopover: typeof import('element-plus/es')['ElPopover']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     InlineDialog: typeof import('./src/components/InlineDialog.vue')['default']
     Markdown: typeof import('./src/components/Markdown.vue')['default']

@@ -18,35 +18,41 @@
         </div>
         <!-- 输入区域 -->
         <div class="input-wrapper">
-          <el-input v-model="input" class="input-block" :autosize="{ minRows: 3, maxRows: 3 }" type="textarea"
-            size="large" placeholder="Ask me everything... (Press Shift+Enter to newline, max 1000 words)"
-            maxlength="1000" show-word-limit @keydown.enter="handleKeySubmit" @click="handleInputClick">
-          </el-input>
+          <div class="custom-input-container">
+            <el-input v-model="input" class="inner-input" :autosize="{ minRows: 1, maxRows: 8 }" type="textarea"
+              resize="none" placeholder="Ask me everything... (Press Shift+Enter to newline, max 1000 words)"
+              maxlength="1000" @keydown.enter="handleKeySubmit" @click="handleInputClick">
+            </el-input>
 
-          <el-button type="primary" :class="['search-btn', buttonClass]" @click="handleButtonClick">
-            {{ buttonText }}
-          </el-button>
+            <div class="input-action-bar">
+              <div class="action-left">
+                <el-upload v-model:file-list="fileList" class="upload-demo"
+                  action="https://run.mocky.io/v3/9e781058-dc5e-49b9-b782-86c6f5713813" multiple :auto-upload="false"
+                  :on-preview="handlePreview" :on-remove="handleRemove" :before-remove="beforeRemove" :limit="3"
+                  :on-exceed="handleExceed" @change="handleFileChange"
+                  accept=".jpg,.jpeg,.png,.gif,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
+                  :show-file-list="false">
+                  <el-tooltip content="Images < 10MB, Files < 200MB" placement="top">
+                    <el-button text circle class="action-btn">
+                      <el-icon :size="20">
+                        <Paperclip />
+                      </el-icon>
+                    </el-button>
+                  </el-tooltip>
+                </el-upload>
+              </div>
 
-          <!-- 上传按钮 -->
-          <div class="upload-btn">
-            <el-upload v-model:file-list="fileList" class="upload-demo"
-              action="https://run.mocky.io/v3/9e781058-dc5e-49b9-b782-86c6f5713813" multiple :auto-upload="false"
-              :on-preview="handlePreview" :on-remove="handleRemove" :before-remove="beforeRemove" :limit="3"
-              :on-exceed="handleExceed" @change="handleFileChange"
-              accept=".jpg,.jpeg,.png,.gif,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
-              :show-file-list="false">
-              <el-popover effect="light" trigger="hover" placement="top">
-                <template #default>
-                  <div>
-                    Images
-                    < 10MB <br />
-                    Files < 200MB </div>
-                </template>
-                <template #reference>
-                  <el-button type="primary">Upload</el-button>
-                </template>
-              </el-popover>
-            </el-upload>
+              <div class="action-right">
+                <span class="word-count">{{ input.length }} / 1000</span>
+                <el-button class="send-btn custom-transparent-btn" :class="buttonClass" @click="handleButtonClick"
+                  :disabled="!input.trim() && !isAssistantTyping">
+                  <el-icon :size="24">
+                    <VideoPause v-if="isAssistantTyping" />
+                    <Promotion v-else />
+                  </el-icon>
+                </el-button>
+              </div>
+            </div>
           </div>
         </div>
         <!-- 建议问题 -->
@@ -65,6 +71,7 @@
 import { ref, onMounted, computed, watch } from "vue";
 import { storeToRefs } from 'pinia';
 import { ElMessage, ElMessageBox } from "element-plus";
+import { Close, Paperclip, Promotion, VideoPause } from "@element-plus/icons-vue";
 import type { UploadProps } from "element-plus";
 import { useChatStore } from '../../store/chat';
 
@@ -216,54 +223,124 @@ onMounted(() => {
 
 </script>
 
-<style>
+<style scoped>
 .input-wrapper {
   position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  width: 80%;
-  margin: 0 auto;
-  max-width: 800px;
+  width: 100%;
+  margin-bottom: 10px;
 }
 
-.input-block {
-  height: 80%;
-  font-size: 18px;
-  border-radius: 20px;
-}
-
-.upload-btn {
-  position: absolute;
-  left: -125px;
-  top: 0px;
-  z-index: 1;
-}
-
-.search-btn {
-  position: relative;
-  top: 0px;
-  right: -15px;
-  z-index: 1;
-}
-
-.oper-btn {
-  position: relative;
-}
-
-#delete-btn {
-  position: absolute;
-  width: 40%;
-}
-
-.user-message,
-.assistant-message {
-  word-break: break-word;
-}
-
-.streamed-output-container {
+.custom-input-container {
+  width: 100%;
+  background-color: #ffffff;
+  border: 1px solid #dcdfe6;
+  border-radius: 16px;
+  padding: 10px 12px 8px 12px;
+  box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.06);
+  transition: all 0.3s ease;
   display: flex;
   flex-direction: column;
+}
+
+.custom-input-container:focus-within {
+  border-color: #409eff;
+  box-shadow: 0 -4px 18px rgba(64, 158, 255, 0.12);
+}
+
+/* 清除el-textarea的默认边框（即内阴影）*/
+:deep(.inner-input .el-textarea__inner) {
+  box-shadow: none !important;
+}
+
+:deep(.inner-input .el-textarea__inner) {
+  border: none !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+  padding: 0 4px;
+  font-size: 16px;
+  resize: none !important;
+  /* 取消右下角拉长把手 */
+
+}
+
+:deep(.inner-input .el-textarea__inner:focus) {
+  outline: none;
+  box-shadow: none !important;
+}
+
+:deep(.inner-input .el-textarea__inner::-webkit-scrollbar) {
+  width: 6px;
+}
+
+:deep(.inner-input .el-textarea__inner::-webkit-scrollbar-thumb) {
+  background: #dcdfe6;
+  border-radius: 4px;
+}
+
+:deep(.inner-input .el-textarea__inner::-webkit-scrollbar-thumb:hover) {
+  background: #c0c4cc;
+}
+
+/* 内部下方的操作栏 */
+.input-action-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 5px;
+}
+
+.action-left {
+  display: flex;
+  align-items: center;
+}
+
+.action-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.action-btn {
+  color: #606266;
+}
+
+.action-btn:hover {
+  color: #409eff;
+  background-color: transparent !important;
+}
+
+.word-count {
+  font-size: 12px;
+  color: #c0c4cc;
+  user-select: none;
+}
+
+.send-btn {
+  transition: all 0.3s;
+}
+
+.custom-transparent-btn {
+  background-color: transparent !important;
+  border: none !important;
+  padding: 0;
+  margin-left: 10px;
+}
+
+.custom-transparent-btn:not(.is-disabled) {
+  color: #409eff !important;
+  cursor: pointer;
+}
+
+.custom-transparent-btn:not(.is-disabled):hover {
+  color: #79bbff !important;
+  background-color: transparent !important;
+}
+
+.custom-transparent-btn.is-disabled {
+  color: #c0c4cc !important;
 }
 
 /* 过渡动画 */
@@ -314,7 +391,7 @@ onMounted(() => {
 
 .suggestion-item {
   padding: 12px;
-  background: #f5f7fa;
+  background: #d4d4d422;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
@@ -322,7 +399,7 @@ onMounted(() => {
 }
 
 .suggestion-item:hover {
-  background: #e4e7ed;
+  background: #e4e7ed69;
   transform: translateY(-2px);
 }
 

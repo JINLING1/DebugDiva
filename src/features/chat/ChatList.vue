@@ -6,8 +6,8 @@
           <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
         </div>
         <p>
-          <strong>我是 DebugDiva！我是你的智能助手，很高兴见到你！</strong><br />
-          <span class="small-text">可以帮你调试代码，解决问题，生成图片！</span>
+          <strong>我是 DebugDiva！你的智能助手，很高兴见到你！</strong><br />
+          <span class="small-text">我可以帮你调试代码，解决问题！</span>
         </p>
       </div>
     </div>
@@ -31,7 +31,7 @@
               </el-button>
               <el-button v-if="chat.isComplete && index === chatHistory.length - 1" size="small"
                 @click="handleUpdate(index)" class="update-btn">
-                <el-icon style="font-size: 16px">
+                <el-icon>
                   <Refresh />
                 </el-icon>
               </el-button>
@@ -104,7 +104,7 @@ watch(
   display: flex;
   justify-content: center;
   height: 50%;
-  width: 80%;
+  width: 100%;
 }
 
 /* 欢迎页 */
@@ -117,30 +117,26 @@ watch(
   text-align: left;
   font-size: 30px;
   margin-bottom: 15px;
-  border: 1px solid #000000;
 }
 
 .message-row {
   padding-bottom: 30px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* 头像 */
 .avatar-container {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 1px solid #c5e1a5;
-  background-color: #fff;
-  overflow: hidden;
-  /* 头像和文本之间的间距 */
-  margin-right: 10px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
+  margin: 10px;
 }
 
 .avatar {
-  width: 22px;
-  height: 22px;
-  margin: 4px;
+  width: 30px;
+  height: 30px;
 }
 
 .small-text {
@@ -153,33 +149,40 @@ watch(
   position: relative;
 }
 
-.copy-btn {
+.el-icon {
+  font-size: 1rem !important;
+}
+
+.copy-btn,
+.update-btn {
   position: absolute;
-  left: 45px;
   bottom: 10px;
   padding: 4px;
-  background-color: #f1f8e9 !important;
+  background-color: transparent !important;
   border: none !important;
   z-index: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
 }
 
-.copy-btn .el-icon {
-  color: #606266;
-  font-size: 16px;
-}
-
-.copy-btn:hover .el-icon {
-  color: #92c876;
+.copy-btn {
+  left: 45px;
 }
 
 .update-btn {
-  position: absolute;
   left: 60px;
-  bottom: 10px;
-  padding: 4px;
-  background-color: #f1f8e9 !important;
-  border: none !important;
-  z-index: 0;
+}
+
+.assistant-message-container:hover .copy-btn,
+.assistant-message-container:hover .update-btn {
+  opacity: 1;
+  visibility: visible;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .loading-spinner {
@@ -217,7 +220,6 @@ strong {
   border-radius: 4px;
 }
 
-/* 鼠标悬停在滑块上时的颜色 */
 .scroller::-webkit-scrollbar-thumb:hover {
   background: #a9adb4;
 }

@@ -45,7 +45,7 @@ body {
   height: 100vh;
   width: 100vw;
   display: flex;
-  background-color: #f9f9f9;
+  background-color: #ffffff;
 }
 
 .right-container {
@@ -53,6 +53,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
 
 .el-aside {
