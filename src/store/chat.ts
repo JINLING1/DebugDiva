@@ -51,11 +51,16 @@ export const useChatStore = defineStore('chat', () => {
 					messages: JSON.parse(JSON.stringify(chatHistory.value)),
 				});
 			} else {
-				const session = chatSessions.value.find(
+				const sessionIndex = chatSessions.value.findIndex(
 					targetSession => targetSession.id === currentSessionId.value,
 				);
-				if (session) {
+				if (sessionIndex !== -1) {
+					const session = chatSessions.value[sessionIndex];
 					session.messages = JSON.parse(JSON.stringify(chatHistory.value));
+					session.date = new Date().toISOString();
+					//更新过的session移动到最顶部
+					chatSessions.value.splice(sessionIndex, 1);
+					chatSessions.value.unshift(session);
 				}
 			}
 		}
@@ -66,6 +71,10 @@ export const useChatStore = defineStore('chat', () => {
 		const storedData = localStorage.getItem('chatSessions');
 		if (storedData) {
 			chatSessions.value = JSON.parse(storedData);
+			//加载时根据最后对话时间降序排序，确保最近的在最上方
+			chatSessions.value.sort(
+				(a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+			);
 		}
 		startNewChat();
 	};
