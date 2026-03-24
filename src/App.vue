@@ -6,7 +6,7 @@
     </el-aside>
     <el-container class="right-container">
       <el-header>
-        <Welcome></Welcome>
+        <Nav></Nav>
       </el-header>
       <el-main>
         <ChatList></ChatList>
@@ -22,7 +22,7 @@
 <script lang="ts" setup>
 import "highlight.js/styles/default.css"; // 引入默认的高亮样式
 import { storeToRefs } from 'pinia';
-import Welcome from "./UI/Welcome.vue";
+import Nav from "./ui/Nav.vue";
 import History from "./features/history/History.vue";
 import ChatList from "./features/chat/ChatList.vue";
 import Input from "./features/input/Input.vue";
