@@ -30,7 +30,7 @@ export const useChatStore = defineStore('chat', () => {
 	const currentSessionId = ref<string | null>(null);
 	const chatHistory = ref<ChatMessage[]>([]);
 	const isAssistantTyping = ref(false);
-	const isSidebarOpen = ref(true);
+	const isSidebarOpen = ref(window.innerWidth > 768);
 
 	const abortController = ref<AbortController | null>(null);
 	const streamedOutput = ref('');

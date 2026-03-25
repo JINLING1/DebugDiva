@@ -235,4 +235,31 @@ strong {
 .scroller::-webkit-scrollbar-thumb:hover {
   background: #a9adb4;
 }
+
+@media (max-width: 768px) {
+  .welcome-message {
+    font-size: 20px;
+    padding: 10px;
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .small-text {
+    font-size: 14px;
+  }
+  
+  .message-row {
+    padding-left: 10px;
+    padding-right: 10px;
+    box-sizing: border-box;
+  }
+  
+  .copy-btn {
+    left: 20px;
+  }
+  
+  .update-btn {
+    left: 40px;
+  }
+}
 </style>

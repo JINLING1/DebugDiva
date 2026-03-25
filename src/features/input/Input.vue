@@ -120,11 +120,6 @@ const handleSuggestionClick = (question: string) => {
 //输入框文本
 const input = ref("");
 
-// 计算按钮文本
-const buttonText = computed(() => {
-  return isAssistantTyping.value ? "Pause" : "Send";
-});
-
 // 计算按钮样式
 const buttonClass = computed(() => {
   return isAssistantTyping.value ? "light-button" : "";
@@ -363,6 +358,12 @@ onMounted(() => {
   width: 80%;
   max-width: 800px;
   transition: all 0.3s ease;
+}
+
+@media (max-width: 768px) {
+  .chat-input-container {
+    width: 95%;
+  }
 }
 
 /* 不同状态定位 */
