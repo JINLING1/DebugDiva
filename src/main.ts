@@ -7,6 +7,7 @@ import 'element-plus/dist/index.css';
 import './styles/index.scss';
 import VueVirtualScroller from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
+import 'element-plus/theme-chalk/dark/css-vars.css';
 
 const app = createApp(App);
 const pinia = createPinia();

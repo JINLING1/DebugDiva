@@ -45,7 +45,8 @@ body {
   height: 100vh;
   width: 100vw;
   display: flex;
-  background-color: #ffffff;
+  background-color: var(--el-bg-color);
+  color: var(--el-text-color-primary);
 }
 
 .right-container {
@@ -59,7 +60,7 @@ body {
 .el-aside {
   width: 260px;
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  background-color: #f3f4f6;
+  background-color: var(--el-bg-color-page);
   overflow: hidden !important;
 }
 

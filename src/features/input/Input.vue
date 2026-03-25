@@ -235,8 +235,8 @@ onMounted(() => {
 
 .custom-input-container {
   width: 100%;
-  background-color: #ffffff;
-  border: 1px solid #dcdfe6;
+  background-color: var(--el-bg-color-overlay);
+  border: 1px solid var(--el-border-color);
   border-radius: 16px;
   padding: 10px 12px 8px 12px;
   box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.06);
@@ -390,7 +390,7 @@ onMounted(() => {
 
 .suggestion-item {
   padding: 12px;
-  background: #d4d4d422;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
@@ -398,7 +398,7 @@ onMounted(() => {
 }
 
 .suggestion-item:hover {
-  background: #e4e7ed69;
+  background: var(--el-fill-color);
   transform: translateY(-2px);
 }
 

@@ -77,10 +77,10 @@ const handleDelete = (id: string) => {
 .aside-block {
   height: 100%;
   width: 100%;
-  background-color: #f9f9f9;
+  background-color: transparent;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e4e7ed;
+  border-right: 1px solid var(--el-border-color-light);
   overflow: hidden;
   box-sizing: border-box
 }
@@ -111,17 +111,17 @@ const handleDelete = (id: string) => {
   margin-bottom: 5px;
   border-radius: 8px;
   cursor: pointer;
-  color: #333;
+  color: var(--el-text-color-primary);
   transition: background-color 0.2s;
 }
 
 .session-item:hover {
-  background-color: #eef2f5;
+  background-color: var(--el-fill-color-light);
 }
 
 .session-item.active {
-  background-color: #e3f2fd;
-  color: #1976d2;
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   font-weight: 500;
 }
 
@@ -181,11 +181,11 @@ const handleDelete = (id: string) => {
 }
 
 .session-list::-webkit-scrollbar-thumb {
-  background: #d2d3d6;
+  background: var(--el-border-color-darker);
   border-radius: 4px;
 }
 
 .session-list::-webkit-scrollbar-thumb:hover {
-  background: #a9adb4;
+  background: var(--el-text-color-placeholder);
 }
 </style>

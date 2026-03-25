@@ -146,7 +146,7 @@ watch(
 
 .small-text {
   font-size: 18px;
-  color: #666;
+  color: var(--el-text-color-secondary);
 }
 
 .assistant-message-container {
@@ -209,6 +209,7 @@ watch(
 
 strong {
   font-weight: bold;
+  color: var(--el-text-color-primary);
 }
 
 .scroller::-webkit-scrollbar {

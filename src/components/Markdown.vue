@@ -23,7 +23,6 @@
 import { ref, watch, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { renderSafeMarkdown, codeCacheMap } from "../utils/markdownHelper.ts";
-import "highlight.js/styles/github.css";
 
 const props = defineProps({
   message: {
@@ -129,7 +128,7 @@ onMounted(() => {
   margin-left: auto;
   margin-right: 0;
   max-width: 85%;
-  background-color: #f4f6f8;
+  background-color: var(--el-fill-color-light);
   border: none;
   border-radius: 10px;
   padding: 8px 16px;
@@ -212,7 +211,7 @@ onMounted(() => {
 }
 
 :deep(.hljs) {
-  background-color: #cfcfcf2f !important;
+  background-color: var(--el-fill-color-dark) !important;
   border-radius: 8px;
   padding: 12px;
 }
@@ -229,7 +228,7 @@ onMounted(() => {
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
-  background-color: #f3f3f3;
+  background-color: var(--el-fill-color-light);
   transition: all 0.2s;
   z-index: 10;
   display: flex;
@@ -237,7 +236,7 @@ onMounted(() => {
 }
 
 :deep(.copy-icon:hover) {
-  background-color: rgba(243, 243, 243, 0.95);
+  background-color: var(--el-fill-color);
 }
 
 :deep(.copy-icon) svg {
