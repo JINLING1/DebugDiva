@@ -70,21 +70,36 @@ const copyFullMessage = async (text: string) => {
   }
 };
 
+let scrollTimeouts: number[] = [];
+const doScrollToBottom = () => {
+  if (scrollerRef.value) {
+    if (typeof scrollerRef.value.scrollToBottom === 'function') {
+      scrollerRef.value.scrollToBottom();
+    } else if (scrollerRef.value.$el) {
+      const el = scrollerRef.value.$el;
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+};
+
 //监听 chatHistory 的变化将界面滚动到底部
 watch(
   () => chatHistory.value,
   () => {
     nextTick(() => {
-      setTimeout(() => {
-        if (scrollerRef.value) {
-          if (typeof scrollerRef.value.scrollToBottom === 'function') {
-            scrollerRef.value.scrollToBottom();
-          } else if (scrollerRef.value.$el) {
-            const el = scrollerRef.value.$el;
-            el.scrollTop = el.scrollHeight;
-          }
-        }
-      }, 50);
+      //清除之前的定时器
+      scrollTimeouts.forEach(clearTimeout);
+      scrollTimeouts = [];
+
+      //立即执行
+      doScrollToBottom();
+
+      //多次延迟执行
+      [50, 150, 300, 500].forEach(delay => {
+        scrollTimeouts.push(
+          window.setTimeout(doScrollToBottom, delay)
+        );
+      });
     });
   },
   { deep: true }
@@ -243,21 +258,21 @@ strong {
     flex-direction: column;
     text-align: center;
   }
-  
+
   .small-text {
     font-size: 14px;
   }
-  
+
   .message-row {
     padding-left: 10px;
     padding-right: 10px;
     box-sizing: border-box;
   }
-  
+
   .copy-btn {
     left: 20px;
   }
-  
+
   .update-btn {
     left: 40px;
   }
