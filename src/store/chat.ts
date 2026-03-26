@@ -165,6 +165,14 @@ export const useChatStore = defineStore('chat', () => {
 						saveSessionsToLocalStorage();
 					}
 				}
+			} else if (eventType === 'conversation.chat.failed') {
+				const parsedData = JSON.parse(eventData);
+				if (assistantMessageIndex !== -1) {
+					const errorMsg = parsedData.last_error?.msg || 'API 请求失败';
+					chatHistory.value[assistantMessageIndex].message = `**[请求失败]** ${errorMsg}`;
+					chatHistory.value[assistantMessageIndex].isComplete = true;
+					saveSessionsToLocalStorage();
+				}
 			}
 		} catch (error) {
 			console.warn('JSON Parse Error:', error);
@@ -281,9 +289,10 @@ export const useChatStore = defineStore('chat', () => {
 					updateUI();
 				}
 			}
-		} catch (error) {
+		} catch (error: any) {
 			isAssistantTyping.value = false;
 			if (assistantMessageIndex !== -1) {
+				chatHistory.value[assistantMessageIndex].message = `**[系统错误]** ${error.message || '未知异常'}`;
 				chatHistory.value[assistantMessageIndex].isComplete = true;
 				saveSessionsToLocalStorage();
 			}
