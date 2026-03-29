@@ -37,13 +37,24 @@ const { isSidebarOpen } = storeToRefs(chatStore);
 
 const isMobile = ref(window.innerWidth <= 768);
 
-const handleResize = () => {
+//防抖函数，限制 resize 事件的触发频率
+function debounce(fn: Function, delay: number) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return function (this: any, ...args: any[]) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      fn.apply(this, args);
+    }, delay);
+  };
+}
+
+const handleResize = debounce(() => {
   const currentIsMobile = window.innerWidth <= 768;
   if (currentIsMobile !== isMobile.value) {
     isMobile.value = currentIsMobile;
     isSidebarOpen.value = !currentIsMobile;
   }
-};
+}, 100);
 
 onMounted(() => {
   window.addEventListener('resize', handleResize);
