@@ -378,6 +378,7 @@ onMounted(() => {
 
 .chat-input-container.dialog {
   bottom: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
 }
 

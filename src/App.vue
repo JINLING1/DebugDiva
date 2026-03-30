@@ -76,6 +76,7 @@ body {
 
 .main-container {
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   display: flex;
   background-color: var(--el-bg-color);
@@ -104,6 +105,7 @@ body {
   left: 0;
   z-index: 1001;
   height: 100vh;
+  height: 100dvh;
 }
 
 .sidebar-overlay {
