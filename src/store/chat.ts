@@ -1,39 +1,17 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { UploadUserFile } from 'element-plus';
+import type { ChatSession, ChatMessage, ChatParams } from '../types/chatType';
 import { cozeApi } from '../api/coze';
-
-export interface ChatMessage {
-	id: string;
-	message: string;
-	isUser: boolean;
-	isComplete: boolean;
-}
-
-export interface ChatSession {
-	id: string;
-	title: string;
-	date: string;
-	messages: ChatMessage[];
-}
-
-interface SearchParams {
-	input?: string;
-	fileList?: UploadUserFile[];
-	userInput?: string;
-	updateIndex?: number;
-}
 
 export const useChatStore = defineStore('chat', () => {
 	const chatSessions = ref<ChatSession[]>([]);
 	const currentSessionId = ref<string | null>(null);
-	const chatHistory = ref<ChatMessage[]>([]);
+	const chatHistory = ref<ChatMessage[]>([]); //当前活跃会话的消息列表
 	const isAssistantTyping = ref(false);
 	const isSidebarOpen = ref(window.innerWidth > 768);
 
 	const abortController = ref<AbortController | null>(null);
-	const streamedOutput = ref('');
 	const streamedText = ref('');
 	let assistantMessageIndex = -1;
 	let streamBuffer = '';
@@ -73,7 +51,7 @@ export const useChatStore = defineStore('chat', () => {
 			chatSessions.value = JSON.parse(storedData);
 			//加载时根据最后对话时间降序排序，确保最近的在最上方
 			chatSessions.value.sort(
-				(a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+				(a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
 			);
 		}
 		startNewChat();
@@ -120,16 +98,10 @@ export const useChatStore = defineStore('chat', () => {
 		}
 	};
 
-	const updateUI = () => {
-		streamedOutput.value = chatHistory.value
-			.map(chatMessage => chatMessage.message)
-			.join('');
-	};
-
+	//用于将流式响应的内容更新到chatHistory的最后一个assistant消息
 	const updateLastAssistantMessage = () => {
 		if (streamedText.value !== '') {
 			chatHistory.value[assistantMessageIndex].message = streamedText.value;
-			updateUI();
 		}
 	};
 
@@ -169,7 +141,8 @@ export const useChatStore = defineStore('chat', () => {
 				const parsedData = JSON.parse(eventData);
 				if (assistantMessageIndex !== -1) {
 					const errorMsg = parsedData.last_error?.msg || 'API 请求失败';
-					chatHistory.value[assistantMessageIndex].message = `**[请求失败]** ${errorMsg}`;
+					chatHistory.value[assistantMessageIndex].message =
+						`**[请求失败]** ${errorMsg}`;
 					chatHistory.value[assistantMessageIndex].isComplete = true;
 					saveSessionsToLocalStorage();
 				}
@@ -189,12 +162,13 @@ export const useChatStore = defineStore('chat', () => {
 		}
 	};
 
-	const handleSearch = async ({
+	//向ai发送提问
+	const handleChat = async ({
 		input = '',
 		fileList = [],
 		userInput = '',
 		updateIndex,
-	}: SearchParams = {}) => {
+	}: ChatParams = {}) => {
 		if (isAssistantTyping.value) {
 			ElMessage.warning('AI正在输出，请稍后再试。');
 			return;
@@ -208,11 +182,13 @@ export const useChatStore = defineStore('chat', () => {
 		isAssistantTyping.value = true;
 
 		if (updateIndex !== undefined) {
+			//更新ai旧回复
 			const chat = chatHistory.value[updateIndex];
 			chat.message = '<div class="loading-spinner"></div>';
 			chat.isComplete = false;
 			assistantMessageIndex = updateIndex;
 		} else {
+			//需要ai新回复
 			chatHistory.value.push({
 				id: `msg-${Date.now()}-user`,
 				message: `${input}`,
@@ -264,6 +240,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (reader) {
 				const decoder = new TextDecoder();
 				while (true) {
+					//如果ai输出完成(isAssistantTyping为false)
 					if (!isAssistantTyping.value) {
 						if (assistantMessageIndex !== -1) {
 							chatHistory.value[assistantMessageIndex].isComplete = true;
@@ -272,9 +249,10 @@ export const useChatStore = defineStore('chat', () => {
 						assistantMessageIndex = -1;
 						break;
 					}
-					const { done, value } = await reader.read();
+					const { done, value } = await reader.read(); //done为true表示读取完成，value为当前读取到的数据
 					if (done) {
 						if (streamBuffer.trim()) {
+							//处理流结束后遗留的chunk
 							parseEventBlock(streamBuffer);
 							streamBuffer = '';
 						}
@@ -286,13 +264,13 @@ export const useChatStore = defineStore('chat', () => {
 					}
 					const text = decoder.decode(value, { stream: true });
 					processStreamedData(text);
-					updateUI();
 				}
 			}
 		} catch (error: any) {
 			isAssistantTyping.value = false;
 			if (assistantMessageIndex !== -1) {
-				chatHistory.value[assistantMessageIndex].message = `**[系统错误]** ${error.message || '未知异常'}`;
+				chatHistory.value[assistantMessageIndex].message =
+					`**[系统错误]** ${error.message || '未知异常'}`;
 				chatHistory.value[assistantMessageIndex].isComplete = true;
 				saveSessionsToLocalStorage();
 			}
@@ -300,11 +278,14 @@ export const useChatStore = defineStore('chat', () => {
 		}
 	};
 
-	const pauseSearch = () => {
+	const pauseChat = () => {
 		if (abortController.value) abortController.value.abort();
 		isAssistantTyping.value = false;
-		
-		if (assistantMessageIndex !== -1 && chatHistory.value[assistantMessageIndex]) {
+
+		if (
+			assistantMessageIndex !== -1 &&
+			chatHistory.value[assistantMessageIndex]
+		) {
 			const chat = chatHistory.value[assistantMessageIndex];
 			if (chat.message === '<div class="loading-spinner"></div>') {
 				chat.message = '已停止回复';
@@ -315,7 +296,7 @@ export const useChatStore = defineStore('chat', () => {
 			saveSessionsToLocalStorage();
 			assistantMessageIndex = -1;
 		}
-		
+
 		ElMessage.success('已暂停AI输出。');
 	};
 
@@ -325,7 +306,7 @@ export const useChatStore = defineStore('chat', () => {
 			.reverse()
 			.find(chat => chat.isUser);
 		if (latestUserMessage) {
-			await handleSearch({
+			await handleChat({
 				userInput: latestUserMessage.message,
 				updateIndex: index,
 			});
@@ -345,8 +326,8 @@ export const useChatStore = defineStore('chat', () => {
 		deleteSession,
 		updateSessionTitle,
 		loadDataFromLocalStorage,
-		handleSearch,
-		pauseSearch,
+		handleChat,
+		pauseChat,
 		handleUpdate,
 	};
 });

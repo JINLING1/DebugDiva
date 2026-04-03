@@ -9,7 +9,7 @@ export const codeCacheMap = new Map<string, string>();
 const md = new MarkdownIt({
 	html: true,
 	linkify: true,
-	typographer: true,
+	typographer: true, //启动排版优化
 	breaks: true,
 	highlight: function (str: string, lang: string) {
 		if (lang && hljs.getLanguage(lang)) {
@@ -35,7 +35,7 @@ const defaultRender =
 		return self.renderToken(tokens, idx, options);
 	};
 
-//拦截 fence，加上复制按钮
+//拦截 fence，重写代码块的渲染:加上复制按钮
 md.renderer.rules.fence = function (
 	tokens: { [x: string]: any },
 	idx: string | number,
@@ -49,7 +49,7 @@ md.renderer.rules.fence = function (
 	//生成唯一ID存入Map
 	const codeId = `code-block-${Math.random().toString(36).substring(2, 11)}`;
 	codeCacheMap.set(codeId, code);
-	// DOM 中仅保留 data-id
+
 	const buttonHtml = `
     <div class="copy-icon" data-id="${codeId}">
       <svg viewBox="0 0 1024 1024" width="16" height="16">

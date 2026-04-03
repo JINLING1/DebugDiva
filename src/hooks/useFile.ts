@@ -30,7 +30,7 @@ export function useFile() {
 		if (file.raw?.type.startsWith('image/')) {
 			maxSize = 10 * 1024 * 1024; // 10MB 图片
 		} else {
-			maxSize = 200 * 1024 * 1024; // 200MB 其他
+			maxSize = 200 * 1024 * 1024; // 200MB 其他类型文件
 		}
 
 		const isLtMaxSize = (file.raw?.size || 0) <= maxSize;
@@ -45,25 +45,22 @@ export function useFile() {
 			return; // 阻止上传
 		}
 
-		console.log('Updated file list:', fileList);
-
 		try {
 			const fileData = await cozeApi.uploadFile(file.raw as File);
 
-			console.log('File uploaded successfully:', fileData);
 			ElMessage.success('File uploaded successfully!');
 
 			const fileId = fileData.id;
 			imageUrl.value = `https://s.coze.cn/t/${fileId}/`; // 拼接完整图片链接
 
-			file.url = fileId; // 保存原始ID到fileList
+			file.url = fileId; //保存原始ID到fileList
 			console.log('Updated file list:', fileList[0].url);
 		} catch (error) {
 			console.error('Error during file upload:', error);
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
 			ElMessage.error('Failed to upload file: ' + errorMessage);
-			// 如果上传失败，从fileList中移除该文件
+			//如果上传失败，从fileList中移除该文件
 			fileList.splice(
 				fileList.findIndex(f => f.raw === file.raw),
 				1,

@@ -2,11 +2,11 @@
   <div class="message-container" :class="{
     'user-message': isUserMessage,
     'ai-message': !isUserMessage,
-    isSearch: isSearch,
   }">
-    <div class="message-content" @click="handleContentClick" element-loading-text="加载中">
+    <div class="message-content" @click="handleContentClick">
       <div v-html="htmlContent"></div>
 
+      <!-- 用于图片放大展示 -->
       <teleport to=".right-container">
         <transition name="fade">
           <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
@@ -30,10 +30,6 @@ const props = defineProps({
     default: "",
   },
   isUserMessage: Boolean,
-  isSearch: {
-    type: Boolean,
-    default: false,
-  },
 });
 
 const htmlContent = ref<string>("");
@@ -155,11 +151,6 @@ onMounted(() => {
   width: fit-content;
   text-align: left;
   word-break: break-word;
-}
-
-.isSearch {
-  max-width: 100%;
-  margin: 5px 0;
 }
 
 /* 放大图片时的遮罩 */

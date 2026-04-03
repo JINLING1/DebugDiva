@@ -22,8 +22,10 @@ export const cozeApi = {
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(payload),
-			signal, // 用于支持中断请求
+			signal, //用于中断请求
 		});
+
+		console.log(response);
 
 		if (!response.ok) {
 			throw new Error(`API 请求失败: ${response.statusText}`);

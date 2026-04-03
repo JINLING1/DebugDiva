@@ -80,7 +80,7 @@ import { useFile } from '../../hooks/useFile'
 
 const chatStore = useChatStore();
 const { isAssistantTyping, chatHistory } = storeToRefs(chatStore);
-const { loadDataFromLocalStorage, handleSearch, pauseSearch } = chatStore;
+const { loadDataFromLocalStorage, handleChat, pauseChat } = chatStore;
 
 const { fileList, handleFileDelete, handleFileChange } = useFile();
 
@@ -100,7 +100,7 @@ const saveDialogState = () => {
   localStorage.setItem("dialogState", dialogState.value);
 };
 //调用搜索前改变dialogState
-const beforeSearch = () => {
+const beforeChat = () => {
   if (dialogState.value !== 'dialog') {
     dialogState.value = 'dialog';
     showSuggestions.value = false; //隐藏建议
@@ -112,7 +112,7 @@ const handleSuggestionClick = (question: string) => {
   input.value = question;
   dialogState.value = 'dialog';
   showSuggestions.value = false;
-  handleSearch({
+  handleChat({
     input: question,
   });
   input.value = "";
@@ -141,8 +141,8 @@ const handleKeySubmit = (event: KeyboardEvent) => {
   } else {
     // 普通 Enter：阻止默认换行并提交内容
     event.preventDefault();
-    beforeSearch();
-    handleSearch({
+    beforeChat();
+    handleChat({
       input: input.value,
       fileList: fileList.value,
     });
@@ -154,12 +154,12 @@ const handleKeySubmit = (event: KeyboardEvent) => {
 // 处理按钮点击
 const handleButtonClick = () => {
   if (isAssistantTyping.value) {
-    // 如果正在输出，执行暂停逻辑
-    pauseSearch();
+    //如果正在输出，暂停
+    pauseChat();
   } else {
-    beforeSearch();
-    // 否则执行搜索逻辑
-    handleSearch({
+    beforeChat();
+    //否则发送提问
+    handleChat({
       input: input.value,
       fileList: fileList.value,
     });

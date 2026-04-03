@@ -75,7 +75,8 @@ const doScrollToBottom = () => {
   if (scrollerRef.value) {
     if (typeof scrollerRef.value.scrollToBottom === 'function') {
       scrollerRef.value.scrollToBottom();
-    } else if (scrollerRef.value.$el) {
+    }
+    else if (scrollerRef.value.$el) {
       const el = scrollerRef.value.$el;
       el.scrollTop = el.scrollHeight;
     }
