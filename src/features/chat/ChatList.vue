@@ -3,7 +3,7 @@
     <div v-if="chatHistory.length === 0" class="welcome-wrapper">
       <div class="welcome-message">
         <div class="avatar-container">
-          <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
+          <img src="/robot.svg" alt="Assistant Avatar" class="avatar" />
         </div>
         <p>
           <strong>我是 DebugDiva！你的智能助手，很高兴见到你！</strong><br />
@@ -19,7 +19,7 @@
             <!-- AI消息 -->
             <div v-if="!chat.isUser" class="assistant-message-container">
               <div class="avatar-container">
-                <img src="/vite.svg" alt="Assistant Avatar" class="avatar" />
+                <img src="/robot.svg" alt="Assistant Avatar" class="avatar" />
               </div>
 
               <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
