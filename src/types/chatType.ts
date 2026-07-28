@@ -1,10 +1,9 @@
-import type { UploadUserFile } from 'element-plus';
-
 export interface ChatMessage {
 	id: string;
 	message: string;
 	isUser: boolean;
 	isComplete: boolean;
+	reasoning?: string;
 }
 
 export interface ChatSession {
@@ -17,7 +16,6 @@ export interface ChatSession {
 //handleChat的参数
 export interface ChatParams {
 	input?: string; //输入内容
-	fileList?: UploadUserFile[];
 	userInput?: string; //需要ai重新回答时的输入
 	updateIndex?: number;
 }

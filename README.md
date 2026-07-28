@@ -1,134 +1,83 @@
-# DebugDiva - LLM对话组件
+# DebugDiva
 
-## 项目概述
+DebugDiva 是一个基于 Vue 3、TypeScript、Pinia 和 Element Plus 的流式 AI 对话组件项目，模型服务使用 DeepSeek API。
 
-DebugDiva 是一个功能强大的LLM对话组件，基于 Vue 3 和 Coze API 构建，提供流畅的对话体验和多模态。
-项目在线体验网址[https://debugdiva.pages.dev/]
+## 功能
 
-## 技术栈
+- DeepSeek 流式回复
+- 多轮会话上下文
+- 创建、切换、重命名和删除本地会话
+- Markdown、表格与代码高亮
+- 复制和重新生成回答
+- 主动停止生成
+- 响应式布局
 
-- **前端框架**：Vue 3 + TypeScript
-- **构建工具**：Vite
-- **状态管理**：Pinia
-- **UI 组件库**：Element Plus
-- **Markdown 渲染**：MarkdownIt + Highlight.js
-- **API 集成**：Coze API
-- **样式**：原生 CSS
+DeepSeek V4 是纯文本模型，因此当前版本暂时禁用了原有的 Coze 文件上传入口。PDF、Office 文档和图片需要通过独立的文本提取、视觉代理或 RAG 服务接入。
 
-## 功能特性
+## 本地开发
 
-- **多模式输入**：支持文本、图片、PDF 等多种格式输入
-- **流式响应**：实时展示 AI 回复，提供流畅的对话体验
-- **文件上传**：支持多种文件类型上传，包括图片、文档、压缩包等
-- **代码高亮**：支持代码块语法高亮，提升代码可读性
-- **代码复制**：一键复制代码块内容
-- **图片放大**：点击图片可放大查看
-- **会话管理**：支持多会话创建、切换和删除
-- **本地存储**：聊天记录自动保存到本地存储
-- **响应式设计**：适配不同屏幕尺寸
+安装依赖：
+
+```bash
+pnpm install
+```
+
+复制 `.env.example` 为 `.env`，并填写服务端配置：
+
+```env
+DEEPSEEK_API_KEY=your_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+VITE_CHAT_API_URL=/api/chat
+```
+
+启动项目：
+
+```bash
+pnpm dev
+```
+
+开发服务器通过 Vite 中间件代理 `/api/chat`。DeepSeek API Key 只由本地 Node 进程读取，不会被 Vue 应用源码引用。为兼容旧的本地 `.env`，开发代理也能读取已有的 `VITE_DEEPSEEK_*` 名称，但建议迁移为上面的无 `VITE_` 配置。
+
+构建：
+
+```bash
+pnpm build
+```
+
+## Cloudflare Pages 部署
+
+项目包含 `functions/api/chat.ts`，部署到 Cloudflare Pages 后由 Pages Function 将 `/api/chat` 请求转发到 DeepSeek。
+
+在 Pages 项目的 Variables and Secrets 中配置：
+
+- Secret：`DEEPSEEK_API_KEY`
+- Variable：`DEEPSEEK_BASE_URL=https://api.deepseek.com`
+- Variable：`DEEPSEEK_MODEL=deepseek-v4-flash`
+
+不要创建 `VITE_DEEPSEEK_API_KEY`。所有 `VITE_*` 变量都有可能进入浏览器构建产物，不适合保存密钥。
+
+## 调用流程
+
+```text
+Vue / Pinia
+  -> POST /api/chat
+  -> Vite 本地代理或 Cloudflare Pages Function
+  -> DeepSeek /chat/completions
+  -> SSE 流式响应
+  -> Vue 增量渲染
+```
+
+前端每次请求都会把当前会话的有效历史消息转换成 `user` / `assistant` 消息数组。重新生成回答时，只提交目标回答之前的上下文。
 
 ## 项目结构
 
+```text
+functions/api/chat.ts       # Cloudflare Pages 服务端代理
+src/api/chat.ts             # 浏览器请求与 DeepSeek SSE 解析
+src/store/chat.ts           # 会话、多轮上下文和生成状态
+src/features/chat/          # 消息列表
+src/features/history/       # 会话历史
+src/features/input/         # 文本输入
+src/components/Markdown.vue # Markdown 渲染
 ```
-src/
-├── api/            # API 调用相关代码
-│   └── coze.ts     # Coze API 集成
-├── assets/         # 静态资源
-│   └── vue.svg     # Vue 图标
-├── components/     # 通用组件
-│   ├── Markdown.vue # Markdown 渲染组件
-│   └── Nav.vue     # 导航组件
-├── features/       # 功能模块
-│   ├── chat/       # 聊天相关组件
-│   │   └── ChatList.vue
-│   ├── history/    # 历史记录组件
-│   │   └── History.vue
-│   └── input/      # 输入相关组件
-│       └── Input.vue
-├── hooks/          # 自定义钩子
-│   └── useFile.ts  # 文件处理钩子
-├── store/          # 状态管理
-│   └── chat.ts     # 聊天状态管理
-├── styles/         # 全局样式
-│   └── index.scss  # SCSS 样式文件
-├── types/          # 类型定义
-│   └── chatType.ts # 聊天相关类型
-├── utils/          # 工具函数
-│   ├── configHelper.ts # 配置助手
-│   └── markdownHelper.ts # Markdown 处理工具
-├── App.vue         # 应用入口组件
-└── main.ts         # 应用启动文件
-```
-
-## 快速开始
-
-### 安装依赖
-
-```bash
-npm install
-```
-
-### 配置 API 密钥
-
-在 项目目录下新建`.env` 文件,在其中配置以下内容：
-
-```bash
-VITE_COZE_API_KEY=your_api_key
-VITE_COZE_BOT_ID=your_bot_id
-VITE_COZE_CHAT_URL=https://api.coze.cn/v3/chat
-VITE_COZE_FILE_URL=https://api.coze.cn/v1/files/upload
-```
-
-其中api key和bot id的获取请在coze官网[https://code.coze.cn/]中进行:
-新建你的智能体,并且安装文件上传插件和图片理解插件
-智能体id即url中bot/后面的数字
-api key请在API&SDK中的个人访问令牌[https://code.coze.cn/playground]中添加获取
-
-### 运行项目
-
-```bash
-npm run dev
-```
-
-### 构建项目
-
-```bash
-npm run build
-```
-
-## 核心功能
-
-### 1. 聊天功能
-
-- 支持文本消息发送和接收
-- 支持流式响应，实时展示 AI 回复
-- 支持多轮对话，上下文保持
-
-### 2. 文件处理
-
-- **图片上传**：支持 JPG、PNG 等格式，最大 10MB
-- **文档上传**：支持 PDF、DOCX 等格式，最大 200MB
-
-### 3. Markdown 渲染
-
-- 支持标准 Markdown 语法
-- 支持代码块语法高亮
-- 支持表格增强
-- 支持图片和链接
-
-### 4. 会话管理
-
-- 创建新会话
-- 切换历史会话
-- 删除会话
-- 重命名会话
-
-## 性能优化
-
-- **虚拟滚动**：使用 DynamicScroller 组件实现长列表的高效渲染
-- **防抖处理**：优化高频响应式更新，减少 DOM 重绘
-- **流式处理**：高效处理 AI 流式响应数据
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request 来贡献该项目!

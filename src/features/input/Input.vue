@@ -2,20 +2,6 @@
   <div class="footer-block">
     <transition name="chat-transition">
       <div class="chat-input-container" :class="dialogState">
-        <!-- 浮动文件列表 -->
-        <div class="floating-file-list" v-if="fileList.length > 0">
-          <div class="file-item" v-for="(file, index) in fileList" :key="file.uid">
-            <el-tag>
-              {{
-                file.name.slice(0, 8) +
-                (file.name.length > 8 ? "..." : "")
-              }}
-              <el-icon class="delete-icon" @click.stop="handleFileDelete(index)">
-                <Close />
-              </el-icon>
-            </el-tag>
-          </div>
-        </div>
         <!-- 输入区域 -->
         <div class="input-wrapper">
           <div class="custom-input-container">
@@ -26,20 +12,13 @@
 
             <div class="input-action-bar">
               <div class="action-left">
-                <el-upload v-model:file-list="fileList" class="upload-demo"
-                  action="https://run.mocky.io/v3/9e781058-dc5e-49b9-b782-86c6f5713813" multiple :auto-upload="false"
-                  :on-preview="handlePreview" :on-remove="handleRemove" :before-remove="beforeRemove" :limit="3"
-                  :on-exceed="handleExceed" @change="handleFileChange"
-                  accept=".jpg,.jpeg,.png,.gif,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
-                  :show-file-list="false">
-                  <el-tooltip content="Images < 10MB, Files < 200MB" placement="top">
-                    <el-button text circle class="action-btn">
+                <el-tooltip content="DeepSeek 文本模式暂不支持附件" placement="top">
+                    <el-button text circle class="action-btn" disabled aria-label="附件功能暂不可用">
                       <el-icon :size="20">
                         <Paperclip />
                       </el-icon>
                     </el-button>
-                  </el-tooltip>
-                </el-upload>
+                </el-tooltip>
               </div>
 
               <div class="action-right">
@@ -70,19 +49,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from "vue";
 import { storeToRefs } from 'pinia';
-import { ElMessage, ElMessageBox } from "element-plus";
-import { Close, Paperclip, Promotion, VideoPause } from "@element-plus/icons-vue";
-import type { UploadProps } from "element-plus";
+import { Paperclip, Promotion, VideoPause } from "@element-plus/icons-vue";
 import { useChatStore } from '../../store/chat';
-
-
-import { useFile } from '../../hooks/useFile'
 
 const chatStore = useChatStore();
 const { isAssistantTyping, chatHistory } = storeToRefs(chatStore);
 const { loadDataFromLocalStorage, handleChat, pauseChat } = chatStore;
-
-const { fileList, handleFileDelete, handleFileChange } = useFile();
 
 // 添加对话框状态类型
 type DialogState = "collapsed" | "expanded" | "dialog";
@@ -144,9 +116,7 @@ const handleKeySubmit = (event: KeyboardEvent) => {
     beforeChat();
     handleChat({
       input: input.value,
-      fileList: fileList.value,
     });
-    fileList.value = [];
     input.value = "";
   }
 };
@@ -161,38 +131,11 @@ const handleButtonClick = () => {
     //否则发送提问
     handleChat({
       input: input.value,
-      fileList: fileList.value,
     });
-    fileList.value = [];
     input.value = "";
   }
 };
 
-
-const handlePreview: UploadProps['onPreview'] = uploadFile => {
-  console.log(uploadFile);
-};
-
-const handleExceed: UploadProps['onExceed'] = (files, uploadFiles) => {
-  ElMessage.warning(
-    `The limit is 3, you selected ${files.length} files this time, add up to ${files.length + uploadFiles.length
-    } totally`,
-  );
-};
-
-const handleRemove: UploadProps['onRemove'] = (file, uploadFiles) => {
-  console.log(file, uploadFiles);
-};
-
-//用于二次确认删除文件
-const beforeRemove: UploadProps["beforeRemove"] = (uploadFile, uploadFiles) => {
-  return ElMessageBox.confirm(
-    `Cancel the transfer of ${uploadFile.name} ?`
-  ).then(
-    () => true,
-    () => false
-  );
-};
 
 watch(
   () => chatHistory.value.length,
