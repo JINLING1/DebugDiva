@@ -19,6 +19,11 @@
 
 						<div class="input-action-bar">
 							<div class="action-left">
+								<ModelSelector
+									:model-mode="modelMode"
+									:disabled="streaming"
+									@change="emit('modelChange', $event)"
+								/>
 								<input
 									ref="fileInputRef"
 									class="file-input"
@@ -79,6 +84,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Paperclip, Promotion, VideoPause } from '@element-plus/icons-vue';
+import ModelSelector from './ModelSelector.vue';
+import type { ModelMode } from '../../types/provider';
 
 type DialogState = 'collapsed' | 'expanded' | 'dialog';
 
@@ -87,14 +94,16 @@ const props = withDefaults(
 		streaming: boolean;
 		hasMessages: boolean;
 		attachmentsDisabled?: boolean;
+		modelMode?: ModelMode;
 	}>(),
-	{ attachmentsDisabled: true },
+	{ attachmentsDisabled: true, modelMode: 'fast' },
 );
 
 const emit = defineEmits<{
 	send: [text: string];
 	stop: [];
 	selectFiles: [files: File[]];
+	modelChange: [mode: ModelMode];
 }>();
 
 const input = ref('');
@@ -249,6 +258,10 @@ const handleFileSelection = (event: Event) => {
 
 .action-right {
 	gap: 12px;
+}
+
+.action-left {
+	gap: 6px;
 }
 
 .file-input {

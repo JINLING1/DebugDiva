@@ -10,9 +10,11 @@
 			:streaming="streaming"
 			:has-messages="messages.length > 0"
 			:attachments-disabled="attachmentsDisabled"
+			:model-mode="modelMode"
 			@send="emit('send', $event)"
 			@stop="emit('stop')"
 			@select-files="emit('selectFiles', $event)"
+			@model-change="emit('modelChange', $event)"
 		/>
 	</section>
 </template>
@@ -21,14 +23,16 @@
 import ChatComposer from './ChatComposer.vue';
 import MessageList from './MessageList.vue';
 import type { ChatMessage } from '../../types/chat';
+import type { ModelMode } from '../../types/provider';
 
 withDefaults(
 	defineProps<{
 		messages: ChatMessage[];
 		streaming: boolean;
 		attachmentsDisabled?: boolean;
+		modelMode?: ModelMode;
 	}>(),
-	{ attachmentsDisabled: true },
+	{ attachmentsDisabled: true, modelMode: 'fast' },
 );
 
 const emit = defineEmits<{
@@ -38,6 +42,7 @@ const emit = defineEmits<{
 	retry: [messageId: string];
 	regenerate: [messageId: string];
 	selectFiles: [files: File[]];
+	modelChange: [mode: ModelMode];
 }>();
 </script>
 

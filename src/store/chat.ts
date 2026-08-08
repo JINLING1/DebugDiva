@@ -8,20 +8,27 @@ import type {
 	ChatSession,
 	MessageStatus,
 } from '../types/chat';
-import { chatApi, type ChatMessagePayload } from '../api/chat';
+import type { ProviderMessage } from '../types/provider';
+import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
 import {
 	appendMessageText,
 	buildChatContext,
 	getMessageText,
-	mapTokenUsage,
 	setMessageText,
 } from '../services/context/buildChatContext';
+import {
+	CHAT_CAPABILITY_SYSTEM_PROMPT,
+	detectImageGenerationIntent,
+	IMAGE_GENERATION_UNAVAILABLE_MESSAGE,
+} from '../services/context/detectImageGenerationIntent';
 import {
 	loadChatSessions,
 	saveChatSessions,
 } from '../services/storage/chatStorage';
+import { useSettingsStore } from './settings';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+const chatProvider = new DeepSeekChatProvider();
 
 const createMessageId = (role: ChatRole) => {
 	const suffix =
@@ -44,6 +51,7 @@ const createTextMessage = (
 });
 
 export const useChatStore = defineStore('chat', () => {
+	const settingsStore = useSettingsStore();
 	const chatSessions = ref<ChatSession[]>([]);
 	const currentSessionId = ref<string | null>(null);
 	const chatHistory = ref<ChatMessage[]>([]);
@@ -170,7 +178,36 @@ export const useChatStore = defineStore('chat', () => {
 			return;
 		}
 
-		let requestMessages: ChatMessagePayload[];
+		if (detectImageGenerationIntent(normalizedInput)) {
+			if (updateIndex !== undefined) {
+				const target = chatHistory.value[updateIndex];
+				if (!target || target.role !== 'assistant') {
+					ElMessage.error('无法重新生成这条回复。');
+					return;
+				}
+
+				chatHistory.value.splice(updateIndex + 1);
+				target.status = 'completed';
+				target.reasoning = '';
+				target.usage = undefined;
+				target.errorCode = undefined;
+				setMessageText(target, IMAGE_GENERATION_UNAVAILABLE_MESSAGE);
+			} else {
+				chatHistory.value.push(
+					createTextMessage('user', normalizedInput, 'completed'),
+					createTextMessage(
+						'assistant',
+						IMAGE_GENERATION_UNAVAILABLE_MESSAGE,
+						'completed',
+					),
+				);
+			}
+
+			saveSessionsToLocalStorage();
+			return;
+		}
+
+		let requestMessages: ProviderMessage[];
 		let targetIndex: number;
 
 		if (updateIndex !== undefined) {
@@ -197,6 +234,11 @@ export const useChatStore = defineStore('chat', () => {
 			targetIndex = chatHistory.value.length - 1;
 		}
 
+		requestMessages = [
+			{ role: 'system', content: CHAT_CAPABILITY_SYSTEM_PROMPT },
+			...requestMessages,
+		];
+
 		isAssistantTyping.value = true;
 		assistantMessageIndex = targetIndex;
 		saveSessionsToLocalStorage();
@@ -205,27 +247,42 @@ export const useChatStore = defineStore('chat', () => {
 		abortController.value = controller;
 
 		try {
-			for await (const chunk of chatApi.chatStream(
-				requestMessages,
-				controller.signal,
-			)) {
+			for await (const event of chatProvider.stream({
+				messages: requestMessages,
+				mode: settingsStore.modelMode,
+				clientId: settingsStore.clientId,
+				signal: controller.signal,
+			})) {
 				if (assistantMessageIndex !== targetIndex) break;
 				const target = chatHistory.value[targetIndex];
 				if (!target) break;
 
-				if (chunk.reasoningContent || chunk.content) {
-					target.status = 'streaming';
+				switch (event.type) {
+					case 'reasoning-delta':
+						target.status = 'streaming';
+						target.reasoning = (target.reasoning || '') + event.text;
+						break;
+					case 'text-delta':
+						target.status = 'streaming';
+						appendMessageText(target, event.text);
+						break;
+					case 'usage':
+						target.usage = event.usage;
+						break;
+					case 'error':
+						target.status = 'error';
+						target.errorCode = event.error.code;
+						setMessageText(target, event.error.message);
+						break;
+					case 'start':
+					case 'done':
+						break;
 				}
-				if (chunk.reasoningContent) {
-					target.reasoning = (target.reasoning || '') + chunk.reasoningContent;
-				}
-				if (chunk.content) appendMessageText(target, chunk.content);
-				if (chunk.usage) target.usage = mapTokenUsage(chunk.usage);
 			}
 
 			if (assistantMessageIndex === targetIndex) {
 				const target = chatHistory.value[targetIndex];
-				if (target) {
+				if (target && target.status !== 'error') {
 					if (getMessageText(target).trim()) {
 						target.status = 'completed';
 					} else {

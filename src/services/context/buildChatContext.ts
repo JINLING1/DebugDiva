@@ -1,5 +1,5 @@
 import type { ChatMessage, MessageContent, TokenUsage } from '../../types/chat';
-import type { ChatMessagePayload } from '../../api/chat';
+import type { ProviderMessage } from '../../types/provider';
 
 const LEGACY_LOADING_MARKER = '<div class="loading-spinner"></div>';
 
@@ -39,7 +39,7 @@ export const isContextMessage = (message: ChatMessage): boolean => {
 export const buildChatContext = (
 	messages: ChatMessage[],
 	endExclusive = messages.length,
-): ChatMessagePayload[] =>
+): ProviderMessage[] =>
 	messages
 		.slice(0, endExclusive)
 		.filter(isContextMessage)

@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
+import { resolveModelMode } from './functions/_shared/modelMode.ts';
 
 const readRequestBody = request =>
 	new Promise((resolve, reject) => {
@@ -13,37 +14,58 @@ const readRequestBody = request =>
 		request.on('error', reject);
 	});
 
+const sendJsonError = (response, status, code, message) => {
+	response.statusCode = status;
+	response.setHeader('Content-Type', 'application/json; charset=utf-8');
+	response.end(JSON.stringify({ error: { code, message } }));
+};
+
 const deepSeekDevProxy = env => ({
 	name: 'deepseek-dev-proxy',
 	configureServer(server) {
 		server.middlewares.use('/api/chat', async (request, response) => {
 			if (request.method !== 'POST') {
-				response.statusCode = 405;
-				response.setHeader('Content-Type', 'application/json; charset=utf-8');
-				response.end(JSON.stringify({ error: { message: 'Method Not Allowed' } }));
+				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed');
 				return;
 			}
 
+			// Legacy VITE_* names are read only by this Node-side proxy. The custom
+			// envPrefix below prevents them from being exposed to browser modules.
 			const apiKey = env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY;
 			const baseUrl = (
 				env.DEEPSEEK_BASE_URL ||
 				env.VITE_DEEPSEEK_BASE_URL ||
 				'https://api.deepseek.com'
 			).replace(/\/$/, '');
-			const model =
-				env.DEEPSEEK_MODEL || env.VITE_DEEPSEEK_MODEL || 'deepseek-v4-flash';
 
 			if (!apiKey) {
-				response.statusCode = 500;
-				response.setHeader('Content-Type', 'application/json; charset=utf-8');
-				response.end(JSON.stringify({ error: { message: '本地 DeepSeek API Key 未配置' } }));
+				sendJsonError(
+					response,
+					500,
+					'AUTH_FAILED',
+					'本地 DeepSeek API Key 未配置',
+				);
 				return;
 			}
 
 			try {
 				const clientPayload = JSON.parse(await readRequestBody(request));
+				const modeConfig = resolveModelMode(clientPayload.mode);
+				if (!modeConfig) {
+					sendJsonError(response, 400, 'INVALID_MODEL_MODE', '不支持的模型模式');
+					return;
+				}
 				if (!Array.isArray(clientPayload.messages) || !clientPayload.messages.length) {
-					throw new Error('messages 不能为空');
+					sendJsonError(response, 400, 'INVALID_REQUEST', 'messages 不能为空');
+					return;
+				}
+				if (
+					clientPayload.clientId !== undefined &&
+					(typeof clientPayload.clientId !== 'string' ||
+						clientPayload.clientId.length > 128)
+				) {
+					sendJsonError(response, 400, 'INVALID_REQUEST', 'clientId 格式无效');
+					return;
 				}
 
 				const controller = new AbortController();
@@ -58,13 +80,11 @@ const deepSeekDevProxy = env => ({
 						'Content-Type': 'application/json',
 					},
 					body: JSON.stringify({
-						model,
+						model: modeConfig.model,
 						messages: clientPayload.messages,
-						thinking: {
-							type: clientPayload.thinking ? 'enabled' : 'disabled',
-						},
-						...(clientPayload.thinking && clientPayload.reasoningEffort
-							? { reasoning_effort: clientPayload.reasoningEffort }
+						thinking: modeConfig.thinking,
+						...('reasoning_effort' in modeConfig
+							? { reasoning_effort: modeConfig.reasoning_effort }
 							: {}),
 						stream: true,
 						stream_options: { include_usage: true },
@@ -93,10 +113,16 @@ const deepSeekDevProxy = env => ({
 				response.end();
 			} catch (error) {
 				if (response.writableEnded) return;
-				response.statusCode = error?.name === 'AbortError' ? 499 : 500;
-				response.setHeader('Content-Type', 'application/json; charset=utf-8');
-				response.end(
-					JSON.stringify({ error: { message: error?.message || '代理请求失败' } }),
+				const invalidJson = error instanceof SyntaxError;
+				sendJsonError(
+					response,
+					invalidJson ? 400 : error?.name === 'AbortError' ? 499 : 500,
+					invalidJson
+						? 'INVALID_REQUEST'
+						: error?.name === 'AbortError'
+							? 'REQUEST_ABORTED'
+							: 'UPSTREAM_UNAVAILABLE',
+					invalidJson ? '请求体不是有效的 JSON' : error?.message || '代理请求失败',
 				);
 			}
 		});
@@ -107,6 +133,7 @@ export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
 
 	return {
+		envPrefix: 'PUBLIC_',
 		plugins: [
 			vue(),
 			deepSeekDevProxy(env),

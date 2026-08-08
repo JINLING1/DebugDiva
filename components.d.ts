@@ -22,6 +22,7 @@ declare module 'vue' {
     MessageContent: typeof import('./src/components/chat/MessageContent.vue')['default']
     MessageItem: typeof import('./src/components/chat/MessageItem.vue')['default']
     MessageList: typeof import('./src/components/chat/MessageList.vue')['default']
+    ModelSelector: typeof import('./src/components/chat/ModelSelector.vue')['default']
     Nav: typeof import('./src/components/Nav.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

@@ -2,12 +2,14 @@
 	<ChatWindow
 		:messages="chatHistory"
 		:streaming="isAssistantTyping"
+		:model-mode="modelMode"
 		attachments-disabled
 		@send="handleSend"
 		@stop="pauseChat"
 		@copy="copyMessage"
 		@retry="regenerateMessage"
 		@regenerate="regenerateMessage"
+		@model-change="setModelMode"
 	/>
 </template>
 
@@ -18,10 +20,14 @@ import { ElMessage } from 'element-plus';
 import ChatWindow from '../../components/chat/ChatWindow.vue';
 import { getMessageText } from '../../services/context/buildChatContext';
 import { useChatStore } from '../../store/chat';
+import { useSettingsStore } from '../../store/settings';
 
 const chatStore = useChatStore();
+const settingsStore = useSettingsStore();
 const { chatHistory, isAssistantTyping } = storeToRefs(chatStore);
+const { modelMode } = storeToRefs(settingsStore);
 const { handleChat, handleUpdate, loadDataFromLocalStorage, pauseChat } = chatStore;
+const { loadSettings, setModelMode } = settingsStore;
 
 const handleSend = (text: string) => {
 	void handleChat({ input: text });
@@ -46,5 +52,8 @@ const regenerateMessage = (messageId: string) => {
 	if (index >= 0) void handleUpdate(index);
 };
 
-onMounted(loadDataFromLocalStorage);
+onMounted(() => {
+	loadSettings();
+	loadDataFromLocalStorage();
+});
 </script>

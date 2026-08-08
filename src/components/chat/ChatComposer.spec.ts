@@ -87,4 +87,12 @@ describe('ChatComposer', () => {
 
 		expect(wrapper.emitted('selectFiles')).toEqual([[[file]]]);
 	});
+
+	it('forwards only a supported model mode', async () => {
+		const wrapper = renderComposer({ modelMode: 'fast' });
+
+		await wrapper.get('select[aria-label="回答模式"]').setValue('deep');
+
+		expect(wrapper.emitted('modelChange')).toEqual([['deep']]);
+	});
 });

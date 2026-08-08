@@ -36,11 +36,12 @@ const MarkdownStub = defineComponent({
 
 const ChatComposerStub = defineComponent({
 	name: 'ChatComposer',
-	emits: ['send', 'stop', 'selectFiles'],
+	emits: ['send', 'stop', 'selectFiles', 'modelChange'],
 	template: `
 		<div data-testid="composer">
 			<button class="send" @click="$emit('send', 'mock question')">send</button>
 			<button class="stop" @click="$emit('stop')">stop</button>
+			<button class="mode" @click="$emit('modelChange', 'deep')">mode</button>
 		</div>
 	`,
 });
@@ -93,9 +94,11 @@ describe('ChatWindow', () => {
 
 		await wrapper.get('.send').trigger('click');
 		await wrapper.get('.stop').trigger('click');
+		await wrapper.get('.mode').trigger('click');
 
 		expect(wrapper.emitted('send')).toEqual([['mock question']]);
 		expect(wrapper.emitted('stop')).toEqual([[]]);
+		expect(wrapper.emitted('modelChange')).toEqual([['deep']]);
 	});
 
 	it('forwards message actions by stable message id', async () => {

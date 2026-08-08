@@ -1,17 +1,18 @@
+import { resolveModelMode } from '../_shared/modelMode';
+
 interface Env {
 	DEEPSEEK_API_KEY: string;
 	DEEPSEEK_BASE_URL?: string;
-	DEEPSEEK_MODEL?: string;
 }
 
 interface ChatRequest {
 	messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-	thinking?: boolean;
-	reasoningEffort?: 'high' | 'max';
+	mode?: unknown;
+	clientId?: unknown;
 }
 
-const jsonError = (message: string, status: number) =>
-	Response.json({ error: { message } }, { status });
+const jsonError = (code: string, message: string, status: number) =>
+	Response.json({ error: { code, message } }, { status });
 
 export const onRequestPost = async ({
 	request,
@@ -21,18 +22,27 @@ export const onRequestPost = async ({
 	env: Env;
 }) => {
 	if (!env.DEEPSEEK_API_KEY) {
-		return jsonError('服务端 DeepSeek API Key 未配置', 500);
+		return jsonError('AUTH_FAILED', '服务端 DeepSeek API Key 未配置', 500);
+	}
+
+	if (!request.headers.get('content-type')?.includes('application/json')) {
+		return jsonError('INVALID_REQUEST', 'Content-Type 必须是 application/json', 415);
 	}
 
 	let payload: ChatRequest;
 	try {
 		payload = await request.json();
 	} catch {
-		return jsonError('请求体不是有效的 JSON', 400);
+		return jsonError('INVALID_REQUEST', '请求体不是有效的 JSON', 400);
+	}
+
+	const modeConfig = resolveModelMode(payload.mode);
+	if (!modeConfig) {
+		return jsonError('INVALID_MODEL_MODE', '不支持的模型模式', 400);
 	}
 
 	if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
-		return jsonError('messages 不能为空', 400);
+		return jsonError('INVALID_REQUEST', 'messages 不能为空', 400);
 	}
 
 	const messagesAreValid = payload.messages.every(
@@ -42,7 +52,14 @@ export const onRequestPost = async ({
 			message.content.length > 0,
 	);
 	if (!messagesAreValid) {
-		return jsonError('messages 格式无效', 400);
+		return jsonError('INVALID_REQUEST', 'messages 格式无效', 400);
+	}
+
+	if (
+		payload.clientId !== undefined &&
+		(typeof payload.clientId !== 'string' || payload.clientId.length > 128)
+	) {
+		return jsonError('INVALID_REQUEST', 'clientId 格式无效', 400);
 	}
 
 	const baseUrl = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(
@@ -56,11 +73,11 @@ export const onRequestPost = async ({
 			'Content-Type': 'application/json',
 		},
 		body: JSON.stringify({
-			model: env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+			model: modeConfig.model,
 			messages: payload.messages,
-			thinking: { type: payload.thinking ? 'enabled' : 'disabled' },
-			...(payload.thinking && payload.reasoningEffort
-				? { reasoning_effort: payload.reasoningEffort }
+			thinking: modeConfig.thinking,
+			...('reasoning_effort' in modeConfig
+				? { reasoning_effort: modeConfig.reasoning_effort }
 				: {}),
 			stream: true,
 			stream_options: { include_usage: true },
