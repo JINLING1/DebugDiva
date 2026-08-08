@@ -14,22 +14,28 @@
 
     <DynamicScroller v-else ref="scrollerRef" class="scroller" :items="chatHistory" :min-item-size="80" key-field="id">
       <template #default="{ item: chat, index, active }">
-        <DynamicScrollerItem :item="chat" :active="active" :size-dependencies="[chat.message]" :data-index="index">
+        <DynamicScrollerItem :item="chat" :active="active"
+          :size-dependencies="[getMessageText(chat), chat.status, chat.reasoning]" :data-index="index">
           <div class="message-row">
             <!-- AI消息 -->
-            <div v-if="!chat.isUser" class="assistant-message-container">
+            <div v-if="chat.role === 'assistant'" class="assistant-message-container">
               <div class="avatar-container">
                 <img src="/robot.svg" alt="Assistant Avatar" class="avatar" />
               </div>
 
-              <Markdown :message="chat.message" :isUserMessage="chat.isUser" />
+              <div class="assistant-content">
+                <div v-if="isWaitingForContent(chat)" class="loading-spinner" aria-label="AI 正在回复"></div>
+                <Markdown v-if="getMessageText(chat)" :message="getMessageText(chat)" :isUserMessage="false" />
+                <span v-if="chat.status === 'stopped'" class="message-status stopped-status">已停止</span>
+                <span v-else-if="chat.status === 'error'" class="message-status error-status">请求失败</span>
+              </div>
 
-              <el-button v-if="chat.isComplete" size="small" @click="copyFullMessage(chat.message)" class="copy-btn">
+              <el-button v-if="canCopy(chat)" size="small" @click="copyFullMessage(getMessageText(chat))" class="copy-btn">
                 <el-icon>
                   <CopyDocument />
                 </el-icon>
               </el-button>
-              <el-button v-if="chat.isComplete && index === chatHistory.length - 1" size="small"
+              <el-button v-if="canRegenerate(chat, index)" size="small"
                 @click="handleUpdate(index)" class="update-btn">
                 <el-icon>
                   <Refresh />
@@ -37,7 +43,7 @@
               </el-button>
             </div>
             <!-- 用户消息 -->
-            <Markdown v-else :message="chat.message" :isUserMessage="chat.isUser" />
+            <Markdown v-else-if="chat.role === 'user'" :message="getMessageText(chat)" :isUserMessage="true" />
           </div>
         </DynamicScrollerItem>
       </template>
@@ -53,12 +59,26 @@ import { ElMessage } from "element-plus";
 import { CopyDocument, Refresh } from "@element-plus/icons-vue";
 import Markdown from "../../components/Markdown.vue";
 import { useChatStore } from '../../store/chat';
+import type { ChatMessage } from '../../types/chat';
+import { getMessageText } from '../../services/context/buildChatContext';
 
 const chatStore = useChatStore();
 const { chatHistory } = storeToRefs(chatStore);
 const { handleUpdate } = chatStore;
 
 const scrollerRef = ref<any>(null);
+
+const isWaitingForContent = (chat: ChatMessage) =>
+  (chat.status === 'pending' || chat.status === 'streaming') &&
+  !getMessageText(chat);
+
+const canCopy = (chat: ChatMessage) => Boolean(getMessageText(chat));
+
+const canRegenerate = (chat: ChatMessage, index: number) =>
+  index === chatHistory.value.length - 1 &&
+  chat.role === 'assistant' &&
+  chat.status !== 'pending' &&
+  chat.status !== 'streaming';
 
 const copyFullMessage = async (text: string) => {
   try {
@@ -169,6 +189,24 @@ watch(
   display: flex;
   position: relative;
   padding-bottom: 25px;
+}
+
+.assistant-content {
+  min-width: 0;
+}
+
+.message-status {
+  display: inline-block;
+  margin: 0 20px 8px;
+  font-size: 12px;
+}
+
+.stopped-status {
+  color: var(--el-text-color-secondary);
+}
+
+.error-status {
+  color: var(--el-color-danger);
 }
 
 .el-icon {

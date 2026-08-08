@@ -1,10 +1,47 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { ChatSession, ChatMessage, ChatParams } from '../types/chatType';
+import type {
+	ChatMessage,
+	ChatParams,
+	ChatRole,
+	ChatSession,
+	MessageStatus,
+} from '../types/chat';
 import { chatApi, type ChatMessagePayload } from '../api/chat';
+import {
+	appendMessageText,
+	buildChatContext,
+	getMessageText,
+	mapTokenUsage,
+	setMessageText,
+} from '../services/context/buildChatContext';
+import {
+	loadChatSessions,
+	saveChatSessions,
+} from '../services/storage/chatStorage';
 
-const LOADING_MESSAGE = '<div class="loading-spinner"></div>';
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+const createMessageId = (role: ChatRole) => {
+	const suffix =
+		typeof crypto !== 'undefined' && 'randomUUID' in crypto
+			? crypto.randomUUID()
+			: Math.random().toString(36).slice(2);
+	return `msg-${Date.now()}-${role}-${suffix}`;
+};
+
+const createTextMessage = (
+	role: ChatRole,
+	text: string,
+	status: MessageStatus,
+): ChatMessage => ({
+	id: createMessageId(role),
+	role,
+	status,
+	contents: text ? [{ type: 'text', text }] : [],
+	createdAt: Date.now(),
+});
 
 export const useChatStore = defineStore('chat', () => {
 	const chatSessions = ref<ChatSession[]>([]);
@@ -12,52 +49,75 @@ export const useChatStore = defineStore('chat', () => {
 	const chatHistory = ref<ChatMessage[]>([]);
 	const isAssistantTyping = ref(false);
 	const isSidebarOpen = ref(window.innerWidth > 768);
+	const initialized = ref(false);
 
 	const abortController = ref<AbortController | null>(null);
 	let assistantMessageIndex = -1;
 
+	const persistSessionList = () => {
+		try {
+			saveChatSessions(localStorage, chatSessions.value);
+			return true;
+		} catch (error) {
+			console.error('Failed to persist chat sessions:', error);
+			ElMessage.error('本地存储空间不足，会话暂时无法保存。');
+			return false;
+		}
+	};
+
 	const saveSessionsToLocalStorage = () => {
 		if (chatHistory.value.length > 0) {
+			const now = Date.now();
 			if (!currentSessionId.value) {
-				currentSessionId.value = Date.now().toString();
+				currentSessionId.value = now.toString();
+				const firstUserMessage = chatHistory.value.find(
+					message => message.role === 'user',
+				);
+				const titleText = firstUserMessage
+					? getMessageText(firstUserMessage).trim()
+					: '新对话';
 				chatSessions.value.unshift({
 					id: currentSessionId.value,
 					title:
-						chatHistory.value[0].message.slice(0, 15) +
-						(chatHistory.value[0].message.length > 15 ? '...' : ''),
-					date: new Date().toISOString(),
-					messages: JSON.parse(JSON.stringify(chatHistory.value)),
+						titleText.slice(0, 15) + (titleText.length > 15 ? '...' : ''),
+					createdAt: now,
+					updatedAt: now,
+					messages: clone(chatHistory.value),
+					activeAttachmentIds: [],
 				});
 			} else {
 				const sessionIndex = chatSessions.value.findIndex(
-					targetSession => targetSession.id === currentSessionId.value,
+					session => session.id === currentSessionId.value,
 				);
 				if (sessionIndex !== -1) {
 					const session = chatSessions.value[sessionIndex];
-					session.messages = JSON.parse(JSON.stringify(chatHistory.value));
-					session.date = new Date().toISOString();
+					session.messages = clone(chatHistory.value);
+					session.updatedAt = now;
 					chatSessions.value.splice(sessionIndex, 1);
 					chatSessions.value.unshift(session);
 				}
 			}
 		}
-		localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
+		persistSessionList();
 	};
 
 	const loadDataFromLocalStorage = () => {
-		const storedData = localStorage.getItem('chatSessions');
-		if (storedData) {
-			try {
-				chatSessions.value = JSON.parse(storedData);
-				chatSessions.value.sort(
-					(a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-				);
-			} catch {
-				chatSessions.value = [];
-				localStorage.removeItem('chatSessions');
-			}
+		if (initialized.value) return;
+
+		const result = loadChatSessions(localStorage);
+		chatSessions.value = result.sessions.sort(
+			(a, b) => b.updatedAt - a.updatedAt,
+		);
+		initialized.value = true;
+
+		if (result.recoveredFromError) {
+			ElMessage.warning(
+				'部分本地会话无法读取，原始数据已保留，请查看迁移备份。',
+			);
 		}
-		startNewChat();
+
+		currentSessionId.value = null;
+		chatHistory.value = [];
 	};
 
 	const startNewChat = () => {
@@ -75,35 +135,24 @@ export const useChatStore = defineStore('chat', () => {
 		const session = chatSessions.value.find(item => item.id === id);
 		if (session) {
 			currentSessionId.value = id;
-			chatHistory.value = JSON.parse(JSON.stringify(session.messages));
+			chatHistory.value = clone(session.messages);
 		}
 	};
 
 	const deleteSession = (id: string) => {
 		chatSessions.value = chatSessions.value.filter(item => item.id !== id);
 		if (currentSessionId.value === id) startNewChat();
-		localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
+		persistSessionList();
 	};
 
 	const updateSessionTitle = (id: string, newTitle: string) => {
 		const session = chatSessions.value.find(item => item.id === id);
 		if (session) {
 			session.title = newTitle;
-			localStorage.setItem('chatSessions', JSON.stringify(chatSessions.value));
+			session.updatedAt = Date.now();
+			persistSessionList();
 		}
 	};
-
-	const isContextMessage = (message: ChatMessage) => {
-		if (!message.message || message.message === LOADING_MESSAGE) return false;
-		if (!message.isUser && !message.isComplete) return false;
-		return !/^\*\*\[(?:系统错误|请求失败)\]\*\*/.test(message.message);
-	};
-
-	const toApiMessages = (messages: ChatMessage[]): ChatMessagePayload[] =>
-		messages.filter(isContextMessage).map(message => ({
-			role: message.isUser ? 'user' : 'assistant',
-			content: message.message,
-		}));
 
 	const handleChat = async ({
 		input = '',
@@ -126,31 +175,25 @@ export const useChatStore = defineStore('chat', () => {
 
 		if (updateIndex !== undefined) {
 			const target = chatHistory.value[updateIndex];
-			if (!target || target.isUser) {
+			if (!target || target.role !== 'assistant') {
 				ElMessage.error('无法重新生成这条回复。');
 				return;
 			}
-			requestMessages = toApiMessages(chatHistory.value.slice(0, updateIndex));
+
+			requestMessages = buildChatContext(chatHistory.value, updateIndex);
 			chatHistory.value.splice(updateIndex + 1);
-			target.message = LOADING_MESSAGE;
+			target.status = 'pending';
+			target.contents = [];
 			target.reasoning = '';
-			target.isComplete = false;
+			target.usage = undefined;
+			target.errorCode = undefined;
 			targetIndex = updateIndex;
 		} else {
-			chatHistory.value.push({
-				id: `msg-${Date.now()}-user`,
-				message: normalizedInput,
-				isUser: true,
-				isComplete: true,
-			});
-			requestMessages = toApiMessages(chatHistory.value);
-			chatHistory.value.push({
-				id: `msg-${Date.now()}-ai`,
-				message: LOADING_MESSAGE,
-				isUser: false,
-				isComplete: false,
-				reasoning: '',
-			});
+			chatHistory.value.push(
+				createTextMessage('user', normalizedInput, 'completed'),
+			);
+			requestMessages = buildChatContext(chatHistory.value);
+			chatHistory.value.push(createTextMessage('assistant', '', 'pending'));
 			targetIndex = chatHistory.value.length - 1;
 		}
 
@@ -160,7 +203,6 @@ export const useChatStore = defineStore('chat', () => {
 
 		const controller = new AbortController();
 		abortController.value = controller;
-		let streamedText = '';
 
 		try {
 			for await (const chunk of chatApi.chatStream(
@@ -171,29 +213,41 @@ export const useChatStore = defineStore('chat', () => {
 				const target = chatHistory.value[targetIndex];
 				if (!target) break;
 
+				if (chunk.reasoningContent || chunk.content) {
+					target.status = 'streaming';
+				}
 				if (chunk.reasoningContent) {
 					target.reasoning = (target.reasoning || '') + chunk.reasoningContent;
 				}
-				if (chunk.content) {
-					streamedText += chunk.content;
-					target.message = streamedText;
-				}
+				if (chunk.content) appendMessageText(target, chunk.content);
+				if (chunk.usage) target.usage = mapTokenUsage(chunk.usage);
 			}
 
 			if (assistantMessageIndex === targetIndex) {
 				const target = chatHistory.value[targetIndex];
 				if (target) {
-					if (!streamedText) target.message = '模型未返回内容，请重试。';
-					target.isComplete = true;
+					if (getMessageText(target).trim()) {
+						target.status = 'completed';
+					} else {
+						target.status = 'error';
+						target.errorCode = 'EMPTY_RESPONSE';
+						setMessageText(target, '模型未返回内容，请重试。');
+					}
 				}
 				saveSessionsToLocalStorage();
 			}
-		} catch (error: any) {
-			if (error?.name !== 'AbortError' && assistantMessageIndex === targetIndex) {
+		} catch (error: unknown) {
+			const isAbortError =
+				error instanceof Error && error.name === 'AbortError';
+			if (!isAbortError && assistantMessageIndex === targetIndex) {
 				const target = chatHistory.value[targetIndex];
 				if (target) {
-					target.message = `**[系统错误]** ${error?.message || '未知异常'}`;
-					target.isComplete = true;
+					target.status = 'error';
+					target.errorCode = 'CHAT_REQUEST_FAILED';
+					setMessageText(
+						target,
+						error instanceof Error ? error.message : '未知异常',
+					);
 				}
 				saveSessionsToLocalStorage();
 			}
@@ -212,11 +266,8 @@ export const useChatStore = defineStore('chat', () => {
 			chatHistory.value[assistantMessageIndex]
 		) {
 			const chat = chatHistory.value[assistantMessageIndex];
-			chat.message =
-				chat.message === LOADING_MESSAGE
-					? '已停止回复'
-					: `${chat.message}\n\n*(已停止回复)*`;
-			chat.isComplete = true;
+			if (!getMessageText(chat).trim()) setMessageText(chat, '已停止回复');
+			chat.status = 'stopped';
 			saveSessionsToLocalStorage();
 			assistantMessageIndex = -1;
 		}
@@ -229,7 +280,7 @@ export const useChatStore = defineStore('chat', () => {
 		const previousUserMessage = chatHistory.value
 			.slice(0, index)
 			.reverse()
-			.find(chat => chat.isUser);
+			.find(chat => chat.role === 'user');
 
 		if (!previousUserMessage) {
 			ElMessage.warning('没有找到对应的用户消息。');
@@ -237,7 +288,7 @@ export const useChatStore = defineStore('chat', () => {
 		}
 
 		await handleChat({
-			userInput: previousUserMessage.message,
+			userInput: getMessageText(previousUserMessage),
 			updateIndex: index,
 		});
 	};
@@ -248,6 +299,7 @@ export const useChatStore = defineStore('chat', () => {
 		chatHistory,
 		isAssistantTyping,
 		isSidebarOpen,
+		initialized,
 		startNewChat,
 		switchSession,
 		deleteSession,
