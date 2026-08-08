@@ -7,7 +7,7 @@
       <div v-html="htmlContent"></div>
 
       <!-- 用于图片放大展示 -->
-      <teleport to=".right-container">
+      <teleport to="body">
         <transition name="fade">
           <div v-if="isBigger" class="bigger-overlay" @click="isBigger = false">
             <div class="blur-background" :style="{ backgroundImage: `url(${enlargedImageUrl})` }"></div>
@@ -155,7 +155,7 @@ onMounted(() => {
 
 /* 放大图片时的遮罩 */
 .bigger-overlay {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;

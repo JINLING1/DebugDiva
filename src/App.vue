@@ -1,5 +1,5 @@
 <template>
-  <!--四部分布局 aside/header/main/footer-->
+  <!--应用外壳：历史侧栏、顶部导航和可复用聊天窗口-->
   <el-container class="main-container">
     <!-- 移动端侧边栏遮罩 -->
     <div v-show="isMobile && isSidebarOpen" class="sidebar-overlay" @click="isSidebarOpen = false"></div>
@@ -12,11 +12,8 @@
         <Nav></Nav>
       </el-header>
       <el-main>
-        <ChatList></ChatList>
+        <ChatView />
       </el-main>
-      <el-footer>
-        <Input></Input>
-      </el-footer>
     </el-container>
   </el-container>
 </template>
@@ -28,8 +25,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import Nav from "./components/Nav.vue";
 import History from "./features/history/History.vue";
-import ChatList from "./features/chat/ChatList.vue";
-import Input from "./features/input/Input.vue";
+import ChatView from "./features/chat/ChatView.vue";
 import { useChatStore } from './store/chat';
 
 const chatStore = useChatStore();
@@ -129,7 +125,9 @@ body {
 }
 
 .el-main {
+  display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden !important;
   padding: 0px !important;
 }
