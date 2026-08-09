@@ -112,7 +112,7 @@ const emitSelectFiles = (
 	chatWindow.vm.$emit('selectFiles', files);
 };
 
-describe('ChatView Phase 4 attachment integration', () => {
+describe('ChatView attachment integration', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		vi.clearAllMocks();

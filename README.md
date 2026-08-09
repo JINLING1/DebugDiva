@@ -1,85 +1,205 @@
-# DebugDiva
+# DebugDiva v2
 
-DebugDiva 是一个基于 Vue 3、TypeScript、Pinia 和 Element Plus 的流式 AI 对话组件项目，模型服务使用 DeepSeek API。
+DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Functions 的 AI 对话应用。前端负责流式交互、附件状态和本地数据管理，服务端统一编排 DeepSeek、文档解析与图片理解能力。
 
-## 功能
+项目采用可替换 Provider、统一消息协议和明确的前后端安全边界，并通过浏览器持久化与自动化测试保证复杂交互的可维护性。
 
-- DeepSeek 流式回复
-- 多轮会话上下文
-- 创建、切换、重命名和删除本地会话
-- Markdown、表格与代码高亮
-- 复制和重新生成回答
-- 主动停止生成
-- 快速回答、深度思考和高质量三种受控模式
-- Provider 统一流事件与服务端模型白名单
-- 明确图片生成请求的本地能力边界提示
-- 响应式布局
+## 技术设计
 
-DeepSeek V4 是纯文本模型，因此当前版本暂时禁用了原有的 Coze 文件上传入口。PDF、Office 文档和图片需要通过独立的文本提取、视觉代理或 RAG 服务接入。
+- Vue 3、TypeScript、Pinia 与 Composition API，组件边界清晰。
+- `ChatWindow`、`MessageList`、`MessageItem`、`MessageContent`、`ChatComposer` 只通过 Props / Events 协作，不直接访问 API 或 localStorage。
+- 统一 `ChatMessage` / `MessageContent` 协议，支持 text、file、image、citation。
+- DeepSeek SSE 增量解析支持任意 UTF-8 chunk 边界、CRLF、keep-alive、usage、`[DONE]`、异常 JSON 和意外 EOF。
+- 停止生成保留部分内容；仅在尚未输出内容时对可重试 5xx 自动重试一次。
+- Chat / Vision Provider 抽象与服务端模型白名单，浏览器只能提交 `fast`、`deep`、`quality`。
+- 文本、PDF、DOCX 在 Pages Function 中解析；原始文件不进入 localStorage。
+- 图片先由 Workers AI 转为描述、OCR 和对象列表，再把纯文本结果交给 DeepSeek。
+- 长对话使用结构化摘要 + 最近消息，摘要失败不阻塞当前聊天。
+- 版本化 localStorage、容量上限、损坏数据保护、旧数据迁移备份、孤儿附件回收。
+- 统一错误协议、`requestId`、超时、取消和脱敏日志，服务端不记录完整提示词或文件正文。
+- 会话 JSON 导出和“清除全部本地数据”，导出使用严格字段白名单。
+
+## 支持范围
+
+| 能力 | 当前实现 |
+| --- | --- |
+| 文本聊天 | DeepSeek SSE、Markdown、代码高亮、停止、重试、重新生成 |
+| 模型模式 | 快速回答、深度思考、高质量；服务端固定映射模型和 thinking 参数 |
+| 文档 | 常见文本 / 代码文件、PDF、DOCX；服务端提取纯文本 |
+| 图片 | JPEG、PNG、WebP；Workers AI 描述、OCR、对象识别 |
+| 长对话 | 结构化摘要、最近消息窗口、后台更新、失败回退 |
+| 本地数据 | 会话、设置、解析结果、摘要；导出、清理和版本迁移 |
+| 图片生成 | 不支持；明确生图请求在本地固定回复“暂且没有提供图像生成功能” |
+
+## 架构
+
+```mermaid
+flowchart LR
+  subgraph Browser["浏览器 · Vue 3"]
+    UI["可复用聊天组件"] --> View["ChatView 容器"]
+    View --> Store["Pinia Chat / Settings"]
+    View --> Attach["useAttachments"]
+    Store --> ChatProvider["ChatProvider"]
+    Store --> Memory["useConversationMemory"]
+    Attach --> FileClient["File API Client"]
+    Attach --> VisionProvider["VisionProvider"]
+    Store <--> Local[("版本化 localStorage")]
+    Attach <--> Local
+    Memory <--> Local
+  end
+
+  subgraph Pages["Cloudflare Pages Functions"]
+    ChatAPI["POST /api/chat"]
+    FileAPI["POST /api/files/parse"]
+    VisionAPI["POST /api/vision/analyze"]
+    SummaryAPI["POST /api/summarize"]
+  end
+
+  ChatProvider --> ChatAPI
+  FileClient --> FileAPI
+  VisionProvider --> VisionAPI
+  Memory --> SummaryAPI
+  ChatAPI --> DeepSeek["DeepSeek API"]
+  SummaryAPI --> DeepSeek
+  VisionAPI --> WorkersAI["Workers AI binding"]
+  FileAPI --> Parsers["unpdf + fflate + saxes"]
+
+  Secrets["API Key / AI binding\n仅存在于服务端"] -.安全边界.-> Pages
+```
+
+四条主要数据流：
+
+1. 聊天：组件事件 → Pinia → `DeepSeekChatProvider` → `/api/chat` → SSE 增量渲染。
+2. 文档：浏览器临时上传原文件 → `/api/files/parse` → 返回提取文本 → 作为附件上下文注入聊天。
+3. 图片：浏览器临时上传原图 → `/api/vision/analyze` → Workers AI 返回文字分析 → DeepSeek 只接收文字。
+4. 摘要：对话超过阈值后后台调用 `/api/summarize`；下一轮上下文按“能力指令 → 摘要 → 激活附件 → 最近消息”组装。
+
+## 目录与职责
+
+```text
+src/components/chat/                 可复用展示组件，只使用 Props / Events
+src/features/chat/ChatView.vue       Pinia、浏览器副作用与组件的薄容器
+src/providers/                       Chat / Vision Provider 实现
+src/composables/                     附件与长对话记忆编排
+src/services/context/                上下文、摘要与附件文本组装
+src/services/storage/                版本化持久化、迁移、容量保护
+src/services/export/                 会话安全导出
+src/store/                            会话和设置状态机
+functions/api/                       四个 Cloudflare Pages Functions
+functions/_shared/                   模型映射、解析器、视觉与 API 生命周期
+```
 
 ## 本地开发
 
-安装依赖：
+建议使用 Node.js 22+ 和 pnpm 10+。`unpdf` 当前版本要求 Node.js 22。
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
-复制 `.env.example` 为 `.env`，并填写服务端配置：
+复制 `.env.example` 为 `.env`，填写服务端配置：
 
 ```env
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 仅用于 pnpm dev 下的本地图片分析代理
+CLOUDFLARE_ACCOUNT_ID=your_account_id
+CLOUDFLARE_API_TOKEN=your_api_token
+VISION_MODEL=@cf/moondream/moondream3.1-9B-A2B
 ```
 
-启动项目：
+启动开发服务器：
 
 ```bash
 pnpm dev
 ```
 
-开发服务器通过 Vite 中间件代理 `/api/chat`。DeepSeek API Key 只由本地 Node 进程读取，不会被 Vue 应用源码引用。旧 `.env` 中的 `VITE_DEEPSEEK_*` 名称仅由代理兼容读取，Vite 的公开变量前缀已改为 `PUBLIC_`，但仍建议迁移为上面的无前缀服务端配置。
+Vite 中间件复用生产 Function 的校验和错误协议。所有密钥只在本地 Node 进程读取；`envPrefix` 已设为 `PUBLIC_`，项目代码不会从浏览器模块读取密钥。不要把密钥改成 `VITE_*` 或 `PUBLIC_*` 变量。
 
-构建：
+常用校验命令：
 
 ```bash
+pnpm typecheck
+pnpm test
 pnpm build
+git diff --check
 ```
 
-## Cloudflare Pages 部署
+自动测试使用模拟 Provider 和 fetch，不会调用真实服务。
 
-项目包含 `functions/api/chat.ts`，部署到 Cloudflare Pages 后由 Pages Function 将 `/api/chat` 请求转发到 DeepSeek。
+## 服务端接口
 
-在 Pages 项目的 Variables and Secrets 中配置：
+| 接口 | 请求 | 作用 |
+| --- | --- | --- |
+| `POST /api/chat` | JSON：messages、mode、匿名 clientId | 校验并安全映射模式，代理 DeepSeek SSE |
+| `POST /api/files/parse` | multipart：file | 解析文本、PDF、DOCX，返回纯文本和元数据 |
+| `POST /api/vision/analyze` | multipart：file、task | 校验图片并调用 Workers AI binding |
+| `POST /api/summarize` | JSON：精简消息、previousSummary、匿名 clientId | 使用固定快速模式生成结构化摘要 |
 
-- Secret：`DEEPSEEK_API_KEY`
-- Variable：`DEEPSEEK_BASE_URL=https://api.deepseek.com`
+统一错误体：
 
-不要创建公开前缀的 API Key。浏览器只提交 `fast`、`deep` 或 `quality`，Pages Function 使用固定白名单映射 DeepSeek 模型和思考参数。
+```json
+{
+  "error": {
+    "code": "UPSTREAM_UNAVAILABLE",
+    "message": "AI 服务暂时不可用",
+    "requestId": "8d8f...",
+    "retryable": true
+  }
+}
+```
 
-## 调用流程
+`X-Request-Id` 响应头与错误体一致。服务端日志只允许 `requestId`、耗时、状态、模式和 usage，不记录提示词、文件内容、密钥、堆栈或供应商完整错误正文。
+
+## localStorage、导出与隐私
+
+项目使用以下版本化键：
 
 ```text
-Vue / Pinia
-  -> DeepSeekChatProvider
-  -> POST /api/chat
-  -> Vite 本地代理或 Cloudflare Pages Function
-  -> DeepSeek /chat/completions
-  -> SSE 流式响应
-  -> Vue 增量渲染
+debugdiva:sessions:v2
+debugdiva:settings:v1
+debugdiva:attachment-results:v1
+debugdiva:summaries:v1
+debugdiva:migration-backup:v1
 ```
 
-前端每次请求都会把当前会话的有效历史消息转换成统一 Provider 消息。浏览器请求体只包含消息、模式和匿名 clientId；重新生成回答时，只提交目标回答之前的上下文。
+- 原始 `File`、Blob、Object URL、图片 Base64 和 API Key 永不持久化。
+- 刷新后保留文档提取文本和图片分析文字；图片会提示“原图未保存”。
+- 会话加载失败时保留原始值和迁移备份，不用空数据覆盖关联摘要或附件记录。
+- localStorage 是当前浏览器、当前设备的数据，不是账户云存储，也不会跨设备同步。
+- 会话可导出 JSON；文件只包含该会话实际引用的数据，仍可能包含聊天正文、推理文本、文档提取内容和 OCR，分享前应自行检查。
+- “清除全部本地数据”只删除 DebugDiva 自己的键，不调用 `localStorage.clear()`，且操作不可撤销。
 
-## 项目结构
+## 可靠性与安全设计
 
-```text
-functions/api/chat.ts                  # Cloudflare Pages 服务端代理
-functions/_shared/modelMode.ts         # 服务端安全模式映射
-src/providers/chat/                    # Provider 协议与 DeepSeek SSE 适配
-src/store/chat.ts                      # 会话、多轮上下文和生成状态
-src/store/settings.ts                  # 模式和匿名 clientId 持久化
-src/components/chat/                   # 可复用聊天组件
-src/features/history/       # 会话历史
-src/components/Markdown.vue # Markdown 渲染
-```
+- 浏览器只发送 `mode`，模型名、thinking 和 reasoning effort 在服务端白名单映射。
+- Chat 最长 60 秒；Summary / Vision 最长 20 秒；文件解析另有页级 deadline。
+- 页面只允许一个聊天请求；Chat、文件解析和视觉分析分别管理 AbortController。
+- 无输出的可重试 5xx 最多自动重试一次；已有输出后断流保留部分文本并显示错误。
+- 服务端校验 Content-Type、请求大小、消息数量、角色、文本、文件 magic bytes、图片尺寸和模型模式。
+- SSE 只有收到 `[DONE]` 才完成；意外 EOF 会变成 `STREAM_PARSE_FAILED`。
+- 存储和导出均使用字段白名单，防止运行时对象或扩展字段泄漏。
+- 匿名 clientId 不包含邮箱、手机号等身份信息。当前没有宣称或实现严格的分布式限流。
+
+## 部署
+
+Cloudflare Pages 的构建、Functions 和服务端配置见 [部署说明](docs/deployment.md)。
+
+## 已知限制
+
+- 不支持图片生成、图片编辑或图生图；相关请求在浏览器本地固定拒答。
+- 不提供登录、跨设备同步、R2 永久文件存储、Vectorize / RAG 或工具自动执行。
+- 每条消息最多 3 个附件；单文件最大 10MB。
+- 文档单文件最多提取 40,000 字符，激活附件文本合计最多 80,000 字符。
+- PDF 最多 50 页；扫描 PDF 没有专业 OCR；加密文档、XLSX、PPTX、ZIP / RAR 不支持。
+- DOCX 仅提取主要 XML 文本，展开 XML 上限 5MB，不处理宏、图片或外链。
+- 图片仅支持 JPEG / PNG / WebP；最大边长 4096，总像素不超过 16,777,216；不支持 GIF。
+- 原图不持久化，刷新后只能查看视觉分析文字，不能恢复缩略图。
+- 会话约 4MB、附件解析结果约 2MB、摘要约 512KB、设置约 16KB，达到上限后需导出并清理。
+- Cloudflare `request.formData()` 在请求缺少可信 `Content-Length` 时会先解析 multipart，再按 `File.size` 二次拒绝；生产环境仍依赖平台请求上限作为第一道保护。
+- 当前前端主包仍较大，Vite 构建会提示 chunk 超过 500KB；后续可按路由和 Markdown / 解析依赖做按需加载。
+
+## 测试
+
+测试覆盖 SSE parser、模型映射、上下文过滤、存储迁移、附件解析、视觉结果、摘要规划、组件事件、完整 Pinia 流程、会话导出和本地数据清理。应用级 smoke 测试为未知路由安装 fetch guard，确保不会误调用真实 API。
