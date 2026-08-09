@@ -94,7 +94,7 @@ import { computed, ref, watch } from 'vue';
 import { Paperclip, Promotion, VideoPause } from '@element-plus/icons-vue';
 import AttachmentList from './AttachmentList.vue';
 import ModelSelector from './ModelSelector.vue';
-import type { DocumentAttachment } from '../../types/attachment';
+import type { ChatAttachment } from '../../types/attachment';
 import type { ModelMode } from '../../types/provider';
 
 type DialogState = 'collapsed' | 'expanded' | 'dialog';
@@ -103,7 +103,7 @@ const props = withDefaults(
 	defineProps<{
 		streaming: boolean;
 		hasMessages: boolean;
-		attachments?: DocumentAttachment[];
+		attachments?: ChatAttachment[];
 		attachmentsDisabled?: boolean;
 		modelMode?: ModelMode;
 	}>(),
@@ -168,6 +168,10 @@ const attachmentAccept = [
 	'.bash',
 	'.pdf',
 	'.docx',
+	'.jpg',
+	'.jpeg',
+	'.png',
+	'.webp',
 	'text/*',
 	'application/json',
 	'application/javascript',
@@ -177,6 +181,9 @@ const attachmentAccept = [
 	'application/x-yaml',
 	'application/pdf',
 	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'image/jpeg',
+	'image/png',
+	'image/webp',
 ].join(',');
 
 const suggestedQuestions = [

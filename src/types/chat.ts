@@ -1,4 +1,4 @@
-import type { DocumentAttachment } from './attachment';
+import type { ChatAttachment } from './attachment';
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -75,5 +75,5 @@ export interface ChatParams {
 	userInput?: string;
 	updateIndex?: number;
 	attachmentIds?: string[];
-	attachmentResults?: DocumentAttachment[];
+	attachmentResults?: ChatAttachment[];
 }

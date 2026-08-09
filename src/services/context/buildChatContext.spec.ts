@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, MessageStatus } from '../../types/chat';
-import type { DocumentAttachment } from '../../types/attachment';
+import type {
+	DocumentAttachment,
+	ImageAttachment,
+} from '../../types/attachment';
 import {
 	buildChatContext,
 	getMessageText,
@@ -33,6 +36,28 @@ const attachment = (
 	size: text.length,
 	text,
 	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+	...overrides,
+});
+
+const imageAttachment = (
+	id: string,
+	overrides: Partial<ImageAttachment> = {},
+): ImageAttachment => ({
+	id,
+	kind: 'image',
+	status: 'ready',
+	name: `${id}.png`,
+	mimeType: 'image/png',
+	size: 100,
+	result: {
+		summary: '代码编辑器和错误终端截图',
+		extractedText: 'TypeError: value is undefined',
+		objects: ['代码编辑器', '终端'],
+		warnings: [],
+	},
 	warnings: [],
 	createdAt: 1,
 	updatedAt: 1,
@@ -175,6 +200,68 @@ describe('buildChatContext', () => {
 		const cropped = buildChatContext([message('u3', 'user', 'completed', ['摘要后的问题'])], undefined, options);
 		expect(cropped[0].content).toContain('正文');
 		expect(cropped[0].content).toMatch(/摘要后的问题$/);
+	});
+
+	it('injects persisted vision results before the user question without image bytes', () => {
+		const user = message('vision-user', 'user', 'completed', ['请分析这个错误']);
+		user.contents.push({
+			type: 'image',
+			attachmentId: 'screenshot',
+			alt: 'error.png',
+		});
+		const image = imageAttachment('screenshot', {
+			previewUrl: 'blob:https://example.test/private',
+		});
+
+		const [providerMessage] = buildChatContext([user], undefined, {
+			activeAttachmentIds: ['screenshot'],
+			attachmentResults: [image],
+		});
+
+		expect(providerMessage.content).toBe(
+			[
+				'[图片分析结果]',
+				'图片名称：screenshot.png',
+				'整体描述：代码编辑器和错误终端截图',
+				'识别文字：',
+				'TypeError: value is undefined',
+				'可见对象：代码编辑器、终端',
+				'[图片分析结果结束]',
+				'',
+				'用户问题：请分析这个错误',
+			].join('\n'),
+		);
+		expect(providerMessage.content).not.toContain('blob:');
+		expect(providerMessage.content).not.toContain('data:image');
+	});
+
+	it('supports mixed document and image context while skipping unfinished vision results', () => {
+		const user = message('mixed-user', 'user', 'completed', ['综合说明']);
+		user.contents.push(
+			{ type: 'image', attachmentId: 'image', alt: 'image.png' },
+			{
+				type: 'file',
+				attachmentId: 'document',
+				name: 'document.txt',
+				mimeType: 'text/plain',
+				size: 3,
+			},
+			{ type: 'image', attachmentId: 'pending', alt: 'pending.png' },
+		);
+
+		const [providerMessage] = buildChatContext([user], undefined, {
+			activeAttachmentIds: ['document', 'image', 'pending'],
+			attachmentResults: [
+				attachment('document', 'DOC'),
+				imageAttachment('image'),
+				imageAttachment('pending', { status: 'analyzing', result: undefined }),
+			],
+		});
+
+		expect(providerMessage.content.indexOf('[图片分析结果]')).toBeLessThan(
+			providerMessage.content.indexOf('[附件开始]'),
+		);
+		expect(providerMessage.content).not.toContain('pending.png');
 	});
 
 	it('maps DeepSeek token usage into the domain model', () => {

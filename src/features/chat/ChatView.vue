@@ -4,6 +4,7 @@
 		:streaming="isAssistantTyping"
 		:model-mode="modelMode"
 		:attachments="activeAttachments"
+		:attachment-results="attachmentRecords"
 		:attachments-disabled="false"
 		@send="handleSend"
 		@stop="pauseChat"
@@ -24,6 +25,7 @@ import { storeToRefs } from 'pinia';
 import { ElMessage } from 'element-plus';
 import ChatWindow from '../../components/chat/ChatWindow.vue';
 import { useAttachments } from '../../composables/useAttachments';
+import { WorkersAIVisionProvider } from '../../providers/vision/WorkersAIVisionProvider';
 import { getMessageText } from '../../services/context/buildChatContext';
 import { useChatStore } from '../../store/chat';
 import { useSettingsStore } from '../../store/settings';
@@ -31,7 +33,9 @@ import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../types/attachment';
 
 const chatStore = useChatStore();
 const settingsStore = useSettingsStore();
-const attachmentManager = useAttachments();
+const attachmentManager = useAttachments({
+	visionProvider: new WorkersAIVisionProvider(),
+});
 const { records: attachmentRecords, storageError } = attachmentManager;
 const { chatHistory, isAssistantTyping, activeAttachmentIds } =
 	storeToRefs(chatStore);
@@ -105,7 +109,8 @@ const handleRemoveAttachment = (attachmentId: string) => {
 	const referencedByHistory = chatHistory.value.some(message =>
 		message.contents.some(
 			content =>
-				content.type === 'file' && content.attachmentId === attachmentId,
+				(content.type === 'file' || content.type === 'image') &&
+				content.attachmentId === attachmentId,
 		),
 	);
 	if (!referencedByHistory) attachmentManager.remove(attachmentId);

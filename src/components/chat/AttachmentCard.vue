@@ -4,7 +4,15 @@
 		:class="`is-${attachment.status}`"
 		:data-attachment-id="attachment.id"
 	>
-		<div class="file-icon" aria-hidden="true">📄</div>
+		<div v-if="attachment.kind === 'image'" class="image-thumbnail">
+			<img
+				v-if="attachment.previewUrl"
+				:src="attachment.previewUrl"
+				:alt="`图片预览 ${attachment.name}`"
+			/>
+			<span v-else aria-hidden="true">🖼️</span>
+		</div>
+		<div v-else class="file-icon" aria-hidden="true">📄</div>
 		<div class="attachment-details">
 			<div class="attachment-heading">
 				<strong class="attachment-name" :title="attachment.name">
@@ -23,21 +31,36 @@
 
 			<p class="attachment-meta">
 				<span>{{ formatFileSize(attachment.size) }}</span>
-				<span v-if="attachment.pageCount">{{ attachment.pageCount }} 页</span>
+				<span v-if="attachment.kind === 'document' && attachment.pageCount">
+					{{ attachment.pageCount }} 页
+				</span>
 			</p>
 
 			<p v-if="attachment.errorMessage" class="attachment-error" role="alert">
 				{{ attachment.errorMessage }}
 			</p>
 
+			<p
+				v-if="attachment.kind === 'image' && attachment.result?.summary"
+				class="vision-summary"
+			>
+				{{ attachment.result.summary }}
+			</p>
+			<p
+				v-if="attachment.kind === 'image' && attachment.status === 'ready'"
+				class="vision-disclosure"
+			>
+				图片内容由视觉模型预解析
+			</p>
+
 			<div
-				v-if="attachment.truncated || attachment.warnings.length"
+				v-if="isTruncated || displayedWarnings.length"
 				class="attachment-warnings"
 				aria-label="附件提示"
 			>
-				<span v-if="attachment.truncated" class="truncated-label">内容已截断</span>
-				<ul v-if="attachment.warnings.length">
-					<li v-for="warning in attachment.warnings" :key="warning">
+				<span v-if="isTruncated" class="truncated-label">内容已截断</span>
+				<ul v-if="displayedWarnings.length">
+					<li v-for="warning in displayedWarnings" :key="warning">
 						{{ warning }}
 					</li>
 				</ul>
@@ -80,11 +103,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { DocumentAttachment } from '../../types/attachment';
+import type {
+	AttachmentStatus,
+	ChatAttachment,
+} from '../../types/attachment';
 
 const props = withDefaults(
 	defineProps<{
-		attachment: DocumentAttachment;
+		attachment: ChatAttachment;
 		disabled?: boolean;
 	}>(),
 	{ disabled: false },
@@ -96,7 +122,7 @@ const emit = defineEmits<{
 	remove: [attachmentId: string];
 }>();
 
-const statusLabels: Record<DocumentAttachment['status'], string> = {
+const statusLabels: Record<AttachmentStatus, string> = {
 	uploading: '上传中',
 	parsing: '解析中',
 	analyzing: '分析中',
@@ -108,6 +134,15 @@ const isProcessing = computed(() =>
 	['uploading', 'parsing', 'analyzing'].includes(props.attachment.status),
 );
 const statusLabel = computed(() => statusLabels[props.attachment.status]);
+const isTruncated = computed(
+	() => props.attachment.kind === 'document' && props.attachment.truncated,
+);
+const displayedWarnings = computed(() => [
+	...props.attachment.warnings,
+	...(props.attachment.kind === 'image'
+		? props.attachment.result?.warnings ?? []
+		: []),
+]);
 
 const formatFileSize = (size: number) => {
 	const safeSize = Number.isFinite(size) ? Math.max(0, size) : 0;
@@ -145,6 +180,24 @@ const formatFileSize = (size: number) => {
 	flex: 0 0 auto;
 	font-size: 20px;
 	line-height: 1.4;
+}
+
+.image-thumbnail {
+	display: flex;
+	width: 48px;
+	height: 48px;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	border-radius: 8px;
+	background: var(--el-fill-color);
+}
+
+.image-thumbnail img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
 }
 
 .attachment-details {
@@ -209,6 +262,22 @@ const formatFileSize = (size: number) => {
 	margin: 5px 0 0;
 	color: var(--el-color-danger);
 	font-size: 12px;
+}
+
+.vision-summary {
+	display: -webkit-box;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	margin: 5px 0 0;
+	color: var(--el-text-color-regular);
+	font-size: 12px;
+}
+
+.vision-disclosure {
+	margin: 4px 0 0;
+	color: var(--el-text-color-secondary);
+	font-size: 11px;
 }
 
 .attachment-warnings {

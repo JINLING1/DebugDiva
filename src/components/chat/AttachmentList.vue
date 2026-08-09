@@ -14,11 +14,11 @@
 
 <script setup lang="ts">
 import AttachmentCard from './AttachmentCard.vue';
-import type { DocumentAttachment } from '../../types/attachment';
+import type { ChatAttachment } from '../../types/attachment';
 
 withDefaults(
 	defineProps<{
-		attachments: DocumentAttachment[];
+		attachments: ChatAttachment[];
 		disabled?: boolean;
 	}>(),
 	{ disabled: false },

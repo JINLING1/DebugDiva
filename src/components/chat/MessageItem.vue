@@ -16,6 +16,7 @@
 					class="message-content-part"
 					:content="content"
 					:role="message.role"
+					:attachment="attachmentFor(content)"
 				/>
 
 				<div
@@ -80,12 +81,21 @@ import {
 	RefreshRight,
 } from '@element-plus/icons-vue';
 import MessageContent from './MessageContent.vue';
-import type { ChatMessage } from '../../types/chat';
+import type { ChatAttachment } from '../../types/attachment';
+import type { ChatMessage, MessageContent as Content } from '../../types/chat';
 
 const props = defineProps<{
 	message: ChatMessage;
 	isLast: boolean;
+	attachmentResults?: ChatAttachment[];
 }>();
+
+const attachmentFor = (content: Content): ChatAttachment | undefined => {
+	if (content.type !== 'file' && content.type !== 'image') return undefined;
+	return props.attachmentResults?.find(
+		attachment => attachment.id === content.attachmentId,
+	);
+};
 
 const emit = defineEmits<{
 	copy: [messageId: string];

@@ -30,6 +30,7 @@
 					<MessageItem
 						:message="item"
 						:is-last="index === messages.length - 1"
+						:attachment-results="attachmentResults"
 						@copy="emit('copy', $event)"
 						@retry="emit('retry', $event)"
 						@regenerate="emit('regenerate', $event)"
@@ -45,9 +46,16 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import MessageItem from './MessageItem.vue';
 import type { ChatMessage } from '../../types/chat';
+import type { ChatAttachment } from '../../types/attachment';
 import { getMessageText } from '../../services/context/buildChatContext';
 
-const props = defineProps<{ messages: ChatMessage[] }>();
+const props = withDefaults(
+	defineProps<{
+		messages: ChatMessage[];
+		attachmentResults?: ChatAttachment[];
+	}>(),
+	{ attachmentResults: () => [] },
+);
 
 const emit = defineEmits<{
 	copy: [messageId: string];

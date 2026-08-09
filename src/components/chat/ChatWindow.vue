@@ -2,6 +2,7 @@
 	<section class="chat-window" aria-label="DebugDiva 对话窗口">
 		<MessageList
 			:messages="messages"
+			:attachment-results="attachmentResults"
 			@copy="emit('copy', $event)"
 			@retry="emit('retry', $event)"
 			@regenerate="emit('regenerate', $event)"
@@ -26,7 +27,7 @@
 <script setup lang="ts">
 import ChatComposer from './ChatComposer.vue';
 import MessageList from './MessageList.vue';
-import type { DocumentAttachment } from '../../types/attachment';
+import type { ChatAttachment } from '../../types/attachment';
 import type { ChatMessage } from '../../types/chat';
 import type { ModelMode } from '../../types/provider';
 
@@ -34,11 +35,17 @@ withDefaults(
 	defineProps<{
 		messages: ChatMessage[];
 		streaming: boolean;
-		attachments?: DocumentAttachment[];
+		attachments?: ChatAttachment[];
+		attachmentResults?: ChatAttachment[];
 		attachmentsDisabled?: boolean;
 		modelMode?: ModelMode;
 	}>(),
-	{ attachments: () => [], attachmentsDisabled: true, modelMode: 'fast' },
+	{
+		attachments: () => [],
+		attachmentResults: () => [],
+		attachmentsDisabled: true,
+		modelMode: 'fast',
+	},
 );
 
 const emit = defineEmits<{

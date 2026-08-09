@@ -7,7 +7,10 @@ import type { ChatEvent } from '../types/provider';
 import { getMessageText } from '../services/context/buildChatContext';
 import { IMAGE_GENERATION_UNAVAILABLE_MESSAGE } from '../services/context/detectImageGenerationIntent';
 import { saveAttachmentResults } from '../services/storage/attachmentStorage';
-import type { DocumentAttachment } from '../types/attachment';
+import type {
+	DocumentAttachment,
+	ImageAttachment,
+} from '../types/attachment';
 import { useSettingsStore } from './settings';
 import { useChatStore } from './chat';
 
@@ -28,6 +31,28 @@ const attachment = (
 	size: text.length,
 	text,
 	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+	...overrides,
+});
+
+const imageAttachment = (
+	id: string,
+	overrides: Partial<ImageAttachment> = {},
+): ImageAttachment => ({
+	id,
+	kind: 'image',
+	status: 'ready',
+	name: `${id}.png`,
+	mimeType: 'image/png',
+	size: 100,
+	result: {
+		summary: '一张包含错误终端的截图',
+		extractedText: 'TypeError: undefined',
+		objects: ['终端'],
+		warnings: [],
+	},
 	warnings: [],
 	createdAt: 1,
 	updatedAt: 1,
@@ -231,6 +256,51 @@ describe('chat store provider orchestration', () => {
 		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain(
 			'仅存在于当前页面',
 		);
+	});
+
+	it('stores image metadata without preview URLs and sends only the vision result to DeepSeek', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const image = imageAttachment('error-shot', {
+			previewUrl: 'blob:https://example.test/private',
+		});
+
+		await store.handleChat({
+			input: '分析截图中的错误',
+			attachmentIds: ['error-shot'],
+			attachmentResults: [image],
+		});
+
+		expect(store.chatHistory[0].contents).toContainEqual({
+			type: 'image',
+			attachmentId: 'error-shot',
+			alt: 'error-shot.png',
+		});
+		const requestContent = streamSpy.mock.calls[0][0].messages.at(-1)!.content;
+		expect(requestContent).toContain('[图片分析结果]');
+		expect(requestContent).toContain('TypeError: undefined');
+		expect(requestContent).not.toContain('blob:');
+		expect(requestContent).not.toContain('data:image');
+		expect(localStorage.getItem('debugdiva:sessions:v2')).not.toContain('blob:');
+	});
+
+	it('does not send a chat request while image analysis is unfinished', async () => {
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+
+		await store.handleChat({
+			input: '分析图片',
+			attachmentIds: ['pending-image'],
+			attachmentResults: [
+				imageAttachment('pending-image', {
+					status: 'analyzing',
+					result: undefined,
+				}),
+			],
+		});
+
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toEqual([]);
 	});
 
 	it('blocks requests when active document text exceeds the 80,000 character total', async () => {

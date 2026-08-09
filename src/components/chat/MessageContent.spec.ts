@@ -4,6 +4,7 @@ import { defineComponent } from 'vue';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import MessageContent from './MessageContent.vue';
+import type { ChatAttachment } from '../../types/attachment';
 import type { ChatRole, MessageContent as ChatContent } from '../../types/chat';
 
 const MarkdownStub = defineComponent({
@@ -16,9 +17,13 @@ const MarkdownStub = defineComponent({
 		'<div data-testid="markdown" :data-user="String(isUserMessage)">{{ message }}</div>',
 });
 
-const renderContent = (content: ChatContent, role: ChatRole = 'assistant') =>
+const renderContent = (
+	content: ChatContent,
+	role: ChatRole = 'assistant',
+	attachment?: ChatAttachment,
+) =>
 	mount(MessageContent, {
-		props: { content, role },
+		props: { content, role, attachment },
 		global: {
 			stubs: { Markdown: MarkdownStub },
 		},
@@ -77,6 +82,73 @@ describe('MessageContent', () => {
 			'网络架构图',
 		);
 		expect(wrapper.text()).toContain('图片暂不可预览');
+	});
+
+	it('renders runtime previews and persisted vision analysis without storing image bytes in the message', () => {
+		const wrapper = renderContent(
+			{
+				type: 'image',
+				attachmentId: 'vision-image',
+				alt: '报错截图',
+			},
+			'user',
+			{
+				id: 'vision-image',
+				kind: 'image',
+				status: 'ready',
+				name: 'error.png',
+				mimeType: 'image/png',
+				size: 100,
+				previewUrl: 'blob:test-vision-preview',
+				result: {
+					summary: '终端显示运行时错误',
+					extractedText: 'TypeError: undefined',
+					objects: ['终端', '代码编辑器'],
+					warnings: ['部分文字可能不完整'],
+				},
+				warnings: [],
+				createdAt: 1,
+				updatedAt: 2,
+			},
+		);
+
+		expect(wrapper.get('img').attributes('src')).toBe(
+			'blob:test-vision-preview',
+		);
+		expect(wrapper.get('[aria-label="图片分析结果"]').text()).toContain(
+			'图片内容由视觉模型预解析',
+		);
+		expect(wrapper.text()).toContain('终端显示运行时错误');
+		expect(wrapper.text()).toContain('TypeError: undefined');
+		expect(wrapper.text()).toContain('终端、代码编辑器');
+	});
+
+	it('explains that only analysis text survives after an image preview is gone', () => {
+		const wrapper = renderContent(
+			{ type: 'image', attachmentId: 'restored', alt: 'restored.png' },
+			'user',
+			{
+				id: 'restored',
+				kind: 'image',
+				status: 'ready',
+				name: 'restored.png',
+				mimeType: 'image/png',
+				size: 10,
+				result: {
+					summary: '已恢复的分析',
+					extractedText: '',
+					objects: [],
+					warnings: [],
+				},
+				warnings: ['原图未保存，已保留分析结果'],
+				createdAt: 1,
+				updatedAt: 2,
+			},
+		);
+
+		expect(wrapper.find('img').exists()).toBe(false);
+		expect(wrapper.text()).toContain('原图未保存，已保留分析结果');
+		expect(wrapper.text()).toContain('已恢复的分析');
 	});
 
 	it('renders a citation source, page and excerpt', () => {

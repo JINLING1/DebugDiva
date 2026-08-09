@@ -1,7 +1,10 @@
 import { MAX_PARSED_DOCUMENT_TEXT_LENGTH } from '../../api/files';
 import type {
 	AttachmentStatus,
+	ChatAttachment,
 	DocumentAttachment,
+	ImageAttachment,
+	VisionResult,
 } from '../../types/attachment';
 
 export const ATTACHMENT_RESULTS_STORAGE_KEY =
@@ -12,6 +15,8 @@ const INTERRUPTED_ERROR_CODE = 'ATTACHMENT_PROCESSING_INTERRUPTED';
 const INTERRUPTED_ERROR_MESSAGE =
 	'页面刷新导致文件处理被中断，请重新选择文件后重试';
 const TEXT_TRUNCATED_WARNING = '提取文本已截断至 40,000 字符';
+export const IMAGE_ORIGINAL_NOT_STORED_WARNING =
+	'原图未保存，已保留分析结果';
 
 export interface AttachmentStorageLike {
 	getItem(key: string): string | null;
@@ -20,7 +25,7 @@ export interface AttachmentStorageLike {
 }
 
 export interface LoadAttachmentResultsResult {
-	attachments: DocumentAttachment[];
+	attachments: ChatAttachment[];
 	recoveredFromError: boolean;
 	errorCode?: string;
 	error?: string;
@@ -35,7 +40,7 @@ export interface SaveAttachmentResultsResult {
 
 interface PersistedAttachmentEnvelope {
 	version: 1;
-	attachments: DocumentAttachment[];
+	attachments: ChatAttachment[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -65,6 +70,27 @@ const normalizeWarnings = (value: unknown): string[] =>
 	Array.isArray(value)
 		? value.filter((item): item is string => typeof item === 'string')
 		: [];
+
+const normalizeVisionResult = (value: unknown): VisionResult | undefined => {
+	if (!isRecord(value)) return undefined;
+	if (
+		typeof value.summary !== 'string' ||
+		typeof value.extractedText !== 'string' ||
+		!Array.isArray(value.objects) ||
+		!value.objects.every(item => typeof item === 'string') ||
+		!Array.isArray(value.warnings) ||
+		!value.warnings.every(item => typeof item === 'string')
+	) {
+		return undefined;
+	}
+
+	return {
+		summary: value.summary,
+		extractedText: value.extractedText,
+		objects: [...value.objects],
+		warnings: [...value.warnings],
+	};
+};
 
 /**
  * Rebuild an attachment from an explicit field allowlist. Runtime-only File,
@@ -145,6 +171,95 @@ export const normalizeDocumentAttachment = (
 	};
 };
 
+/**
+ * Rebuild an image attachment from a strict allowlist. In particular,
+ * previewUrl and any accidental File/Blob/Base64 fields never cross the
+ * persistence boundary.
+ */
+export const normalizeImageAttachment = (
+	value: unknown,
+	now = Date.now(),
+	wasRestored = false,
+): ImageAttachment | null => {
+	if (!isRecord(value)) return null;
+	if (
+		typeof value.id !== 'string' ||
+		value.id.length === 0 ||
+		value.kind !== 'image' ||
+		typeof value.name !== 'string' ||
+		value.name.length === 0 ||
+		typeof value.mimeType !== 'string'
+	) {
+		return null;
+	}
+
+	const size = finiteNonNegativeNumber(value.size);
+	if (size === undefined) return null;
+
+	let status: AttachmentStatus = isAttachmentStatus(value.status)
+		? value.status
+		: 'error';
+	let errorCode =
+		typeof value.errorCode === 'string' ? value.errorCode : undefined;
+	let errorMessage =
+		typeof value.errorMessage === 'string' ? value.errorMessage : undefined;
+
+	if (isProcessingStatus(status)) {
+		status = 'error';
+		errorCode = INTERRUPTED_ERROR_CODE;
+		errorMessage = INTERRUPTED_ERROR_MESSAGE;
+	} else if (!isAttachmentStatus(value.status)) {
+		errorCode = 'INVALID_ATTACHMENT_STATUS';
+		errorMessage = '附件状态无效，请重新选择文件';
+	}
+
+	const result = normalizeVisionResult(value.result);
+	if (status === 'ready' && !result) {
+		status = 'error';
+		errorCode = 'INVALID_VISION_RESULT';
+		errorMessage = '图片分析结果无效，请重新选择图片';
+	}
+
+	const warnings = normalizeWarnings(value.warnings);
+	if (
+		wasRestored &&
+		status === 'ready' &&
+		result &&
+		!warnings.includes(IMAGE_ORIGINAL_NOT_STORED_WARNING)
+	) {
+		warnings.push(IMAGE_ORIGINAL_NOT_STORED_WARNING);
+	}
+
+	const createdAt = validTimestamp(value.createdAt, now);
+	const updatedAt = validTimestamp(value.updatedAt, createdAt);
+
+	return {
+		id: value.id,
+		kind: 'image',
+		status,
+		name: value.name,
+		mimeType: value.mimeType,
+		size,
+		result,
+		warnings,
+		errorCode,
+		errorMessage,
+		createdAt,
+		updatedAt,
+	};
+};
+
+const normalizeChatAttachment = (
+	value: unknown,
+	now = Date.now(),
+	wasRestored = false,
+): ChatAttachment | null => {
+	if (!isRecord(value)) return null;
+	return value.kind === 'image'
+		? normalizeImageAttachment(value, now, wasRestored)
+		: normalizeDocumentAttachment(value, now);
+};
+
 const byteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
 
 const isQuotaError = (error: unknown): boolean => {
@@ -194,8 +309,8 @@ export const loadAttachmentResults = (
 		const values = getPersistedArray(JSON.parse(raw));
 		if (!values) throw new Error('附件记录格式无效');
 		const attachments = values
-			.map(value => normalizeDocumentAttachment(value, now))
-			.filter((value): value is DocumentAttachment => value !== null);
+			.map(value => normalizeChatAttachment(value, now, true))
+			.filter((value): value is ChatAttachment => value !== null);
 		const skipped = values.length - attachments.length;
 
 		return {
@@ -217,12 +332,12 @@ export const loadAttachmentResults = (
 
 export const saveAttachmentResults = (
 	storage: AttachmentStorageLike,
-	attachments: readonly DocumentAttachment[],
+	attachments: readonly ChatAttachment[],
 	softLimitBytes = ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES,
 ): SaveAttachmentResultsResult => {
 	const normalized = attachments
-		.map(value => normalizeDocumentAttachment(value))
-		.filter((value): value is DocumentAttachment => value !== null);
+		.map(value => normalizeChatAttachment(value))
+		.filter((value): value is ChatAttachment => value !== null);
 	const envelope: PersistedAttachmentEnvelope = {
 		version: 1,
 		attachments: normalized,

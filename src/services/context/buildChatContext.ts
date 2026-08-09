@@ -1,5 +1,5 @@
 import type { ChatMessage, MessageContent, TokenUsage } from '../../types/chat';
-import type { DocumentAttachment } from '../../types/attachment';
+import type { ChatAttachment } from '../../types/attachment';
 import type { ProviderMessage } from '../../types/provider';
 
 const LEGACY_LOADING_MARKER = '<div class="loading-spinner"></div>';
@@ -39,21 +39,46 @@ export const isContextMessage = (message: ChatMessage): boolean => {
 
 export interface BuildChatContextOptions {
 	activeAttachmentIds?: readonly string[];
-	attachmentResults?: readonly DocumentAttachment[];
+	attachmentResults?: readonly ChatAttachment[];
 }
 
 const sanitizeAttachmentMetadata = (value: string): string =>
 	value.replace(/[\r\n]+/g, ' ').trim();
 
-const formatAttachmentBlock = (attachment: DocumentAttachment): string =>
-	[
-		'[附件开始]',
-		`文件名：${sanitizeAttachmentMetadata(attachment.name)}`,
-		`文件类型：${sanitizeAttachmentMetadata(attachment.mimeType)}`,
-		'内容：',
-		attachment.text.trim(),
-		'[附件结束]',
+const hasUsableAttachmentContext = (attachment: ChatAttachment): boolean => {
+	if (attachment.status !== 'ready') return false;
+	if (attachment.kind === 'document') return Boolean(attachment.text.trim());
+	return Boolean(
+		attachment.result &&
+			(attachment.result.summary.trim() ||
+				attachment.result.extractedText.trim() ||
+				attachment.result.objects.length),
+	);
+};
+
+const formatAttachmentBlock = (attachment: ChatAttachment): string => {
+	if (attachment.kind === 'document') {
+		return [
+			'[附件开始]',
+			`文件名：${sanitizeAttachmentMetadata(attachment.name)}`,
+			`文件类型：${sanitizeAttachmentMetadata(attachment.mimeType)}`,
+			'内容：',
+			attachment.text.trim(),
+			'[附件结束]',
+		].join('\n');
+	}
+
+	const result = attachment.result!;
+	return [
+		'[图片分析结果]',
+		`图片名称：${sanitizeAttachmentMetadata(attachment.name)}`,
+		`整体描述：${result.summary.trim() || '未提供'}`,
+		'识别文字：',
+		result.extractedText.trim() || '未识别到文字',
+		`可见对象：${result.objects.join('、') || '未识别'}`,
+		'[图片分析结果结束]',
 	].join('\n');
+};
 
 export const buildChatContext = (
 	messages: ChatMessage[],
@@ -64,10 +89,7 @@ export const buildChatContext = (
 	const activeIdSet = new Set(activeIds);
 	const readyAttachments = new Map(
 		(options.attachmentResults ?? [])
-			.filter(
-				attachment =>
-					attachment.status === 'ready' && Boolean(attachment.text.trim()),
-			)
+			.filter(hasUsableAttachmentContext)
 			.map(attachment => [attachment.id, attachment]),
 	);
 	const injectedIds = new Set<string>();
@@ -84,18 +106,22 @@ export const buildChatContext = (
 		if (message.role === 'user') {
 			const blocks: string[] = [];
 			for (const item of message.contents) {
+				const attachmentId =
+					item.type === 'file' || item.type === 'image'
+						? item.attachmentId
+						: undefined;
 				if (
-					item.type !== 'file' ||
-					!activeIdSet.has(item.attachmentId) ||
-					injectedIds.has(item.attachmentId)
+					!attachmentId ||
+					!activeIdSet.has(attachmentId) ||
+					injectedIds.has(attachmentId)
 				) {
 					continue;
 				}
 
-				const attachment = readyAttachments.get(item.attachmentId);
+				const attachment = readyAttachments.get(attachmentId);
 				if (!attachment) continue;
 				blocks.push(formatAttachmentBlock(attachment));
-				injectedIds.add(item.attachmentId);
+				injectedIds.add(attachmentId);
 			}
 
 			if (blocks.length) {
@@ -115,7 +141,7 @@ export const buildChatContext = (
 			.filter(id => !injectedIds.has(id))
 			.map(id => readyAttachments.get(id))
 			.filter(
-				(attachment): attachment is DocumentAttachment =>
+				(attachment): attachment is ChatAttachment =>
 					attachment !== undefined,
 			)
 			.map(formatAttachmentBlock);

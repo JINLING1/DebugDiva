@@ -11,7 +11,7 @@ import type {
 import {
 	MAX_ACTIVE_ATTACHMENT_TEXT_LENGTH,
 	MAX_ATTACHMENTS_PER_MESSAGE,
-	type DocumentAttachment,
+	type ChatAttachment,
 } from '../types/attachment';
 import type { ProviderMessage } from '../types/provider';
 import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
@@ -58,20 +58,28 @@ const createTextMessage = (
 
 const createUserMessage = (
 	text: string,
-	attachments: readonly DocumentAttachment[] = [],
+	attachments: readonly ChatAttachment[] = [],
 ): ChatMessage => ({
 	id: createMessageId('user'),
 	role: 'user',
 	status: 'completed',
 	contents: [
 		{ type: 'text', text },
-		...attachments.map(attachment => ({
-			type: 'file' as const,
-			attachmentId: attachment.id,
-			name: attachment.name,
-			mimeType: attachment.mimeType,
-			size: attachment.size,
-		})),
+		...attachments.map(attachment =>
+			attachment.kind === 'image'
+				? {
+						type: 'image' as const,
+						attachmentId: attachment.id,
+						alt: attachment.name,
+					}
+				: {
+						type: 'file' as const,
+						attachmentId: attachment.id,
+						name: attachment.name,
+						mimeType: attachment.mimeType,
+						size: attachment.size,
+					},
+		),
 	],
 	createdAt: Date.now(),
 });
@@ -210,7 +218,7 @@ export const useChatStore = defineStore('chat', () => {
 
 	const resolveAttachmentContext = (
 		requestedIds: readonly string[],
-		runtimeResults?: readonly DocumentAttachment[],
+		runtimeResults?: readonly ChatAttachment[],
 	) => {
 		const all = runtimeResults
 			? [...runtimeResults]
@@ -218,7 +226,7 @@ export const useChatStore = defineStore('chat', () => {
 		const byId = new Map(
 			all.map(attachment => [attachment.id, attachment]),
 		);
-		const active: DocumentAttachment[] = [];
+		const active: ChatAttachment[] = [];
 
 		for (const id of requestedIds) {
 			const attachment = byId.get(id);
@@ -230,17 +238,37 @@ export const useChatStore = defineStore('chat', () => {
 				ElMessage.error(`附件“${attachment.name}”尚未解析完成。`);
 				return null;
 			}
-			if (!attachment.text.trim()) {
-				ElMessage.error(
-					`附件“${attachment.name}”未提取到可用文本，扫描版 PDF 暂不支持 OCR。`,
-				);
+			if (attachment.kind === 'document') {
+				if (!attachment.text.trim()) {
+					ElMessage.error(
+						`附件“${attachment.name}”未提取到可用文本，扫描版 PDF 暂不支持 OCR。`,
+					);
+					return null;
+				}
+			} else if (
+				!attachment.result ||
+				(!attachment.result.summary.trim() &&
+					!attachment.result.extractedText.trim() &&
+					attachment.result.objects.length === 0)
+			) {
+				ElMessage.error(`图片“${attachment.name}”缺少可用的分析结果。`);
 				return null;
 			}
 			active.push(attachment);
 		}
 
 		const totalCharacters = active.reduce(
-			(total, attachment) => total + Array.from(attachment.text).length,
+			(total, attachment) => {
+				const contextText =
+					attachment.kind === 'document'
+						? attachment.text
+						: [
+								attachment.result?.summary ?? '',
+								attachment.result?.extractedText ?? '',
+								...(attachment.result?.objects ?? []),
+							].join('\n');
+				return total + Array.from(contextText).length;
+			},
 			0,
 		);
 		if (totalCharacters > MAX_ACTIVE_ATTACHMENT_TEXT_LENGTH) {
@@ -252,9 +280,11 @@ export const useChatStore = defineStore('chat', () => {
 	};
 
 	const getMessageAttachmentIds = (message: ChatMessage): string[] =>
-		normalizeAttachmentIds(
+			normalizeAttachmentIds(
 			message.contents
-				.filter(content => content.type === 'file')
+				.filter(
+					content => content.type === 'file' || content.type === 'image',
+				)
 				.map(content => content.attachmentId),
 		);
 
@@ -494,7 +524,7 @@ export const useChatStore = defineStore('chat', () => {
 
 	const handleUpdate = async (
 		index: number,
-		attachmentResults?: DocumentAttachment[],
+		attachmentResults?: ChatAttachment[],
 	) => {
 		const previousUserMessage = chatHistory.value
 			.slice(0, index)

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_PARSED_DOCUMENT_TEXT_LENGTH } from '../../api/files';
-import type { DocumentAttachment } from '../../types/attachment';
+import type {
+	DocumentAttachment,
+	ImageAttachment,
+} from '../../types/attachment';
 import {
 	ATTACHMENT_RESULTS_STORAGE_KEY,
+	IMAGE_ORIGINAL_NOT_STORED_WARNING,
 	clearAttachmentResults,
 	loadAttachmentResults,
 	saveAttachmentResults,
@@ -46,6 +50,28 @@ const attachment = (
 	...overrides,
 });
 
+const imageAttachment = (
+	overrides: Partial<ImageAttachment> = {},
+): ImageAttachment => ({
+	id: 'image-1',
+	kind: 'image',
+	status: 'ready',
+	name: 'error.png',
+	mimeType: 'image/png',
+	size: 128,
+	previewUrl: 'blob:https://example.test/runtime-preview',
+	result: {
+		summary: '一张错误截图',
+		extractedText: 'TypeError: boom',
+		objects: ['代码编辑器'],
+		warnings: [],
+	},
+	warnings: [],
+	createdAt: 300,
+	updatedAt: 400,
+	...overrides,
+});
+
 describe('attachment storage', () => {
 	it('round-trips only the persistable attachment field allowlist', () => {
 		const storage = new MemoryStorage();
@@ -63,6 +89,40 @@ describe('attachment storage', () => {
 		expect(raw).not.toContain('blob:https');
 		expect(raw).not.toContain('"file"');
 		expect(loadAttachmentResults(storage).attachments).toEqual([attachment()]);
+	});
+
+	it('persists a vision result but never runtime image data or preview URLs', () => {
+		const storage = new MemoryStorage();
+		const unsafe = {
+			...imageAttachment(),
+			file: new File(['secret'], 'secret.png', { type: 'image/png' }),
+			blob: new Blob(['secret']),
+			base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+			dataUri: 'data:image/png;base64,iVBORw0KGgo=',
+		} as ImageAttachment;
+
+		expect(saveAttachmentResults(storage, [unsafe]).ok).toBe(true);
+		const raw = storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY) || '';
+		expect(raw).toContain('TypeError: boom');
+		expect(raw).not.toContain('previewUrl');
+		expect(raw).not.toContain('blob:https');
+		expect(raw).not.toContain('base64');
+		expect(raw).not.toContain('data:image');
+		expect(raw).not.toContain('"file"');
+		expect(raw).not.toContain('"blob"');
+	});
+
+	it('restores ready image analysis without a preview and shows the refresh warning', () => {
+		const storage = new MemoryStorage();
+		expect(saveAttachmentResults(storage, [imageAttachment()]).ok).toBe(true);
+
+		const [loaded] = loadAttachmentResults(storage).attachments;
+
+		expect(loaded.kind).toBe('image');
+		if (loaded.kind !== 'image') throw new Error('expected image attachment');
+		expect(loaded.previewUrl).toBeUndefined();
+		expect(loaded.result).toEqual(imageAttachment().result);
+		expect(loaded.warnings).toContain(IMAGE_ORIGINAL_NOT_STORED_WARNING);
 	});
 
 	it.each(['uploading', 'parsing', 'analyzing'] as const)(
@@ -151,6 +211,7 @@ describe('attachment storage', () => {
 		);
 
 		const [loaded] = loadAttachmentResults(storage).attachments;
+		if (loaded.kind !== 'document') throw new Error('expected document');
 		expect(loaded.text).toHaveLength(MAX_PARSED_DOCUMENT_TEXT_LENGTH);
 		expect(loaded.truncated).toBe(true);
 		expect(loaded.warnings).toContain('提取文本已截断至 40,000 字符');
@@ -171,6 +232,7 @@ describe('attachment storage', () => {
 		);
 
 		const [loaded] = loadAttachmentResults(storage).attachments;
+		if (loaded.kind !== 'document') throw new Error('expected document');
 		expect(Array.from(loaded.text)).toHaveLength(
 			MAX_PARSED_DOCUMENT_TEXT_LENGTH,
 		);

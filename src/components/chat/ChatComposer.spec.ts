@@ -106,7 +106,7 @@ describe('ChatComposer', () => {
 		expect(wrapper.emitted('selectFiles')).toEqual([[[file]]]);
 	});
 
-	it('accepts the supported Phase 4 document formats', () => {
+	it('accepts supported document and vision image formats', () => {
 		const wrapper = renderComposer({ attachmentsDisabled: false });
 		const accept = wrapper.get('input[type="file"]').attributes('accept');
 
@@ -114,6 +114,11 @@ describe('ChatComposer', () => {
 		expect(accept).toContain('.pdf');
 		expect(accept).toContain('.docx');
 		expect(accept).toContain('application/pdf');
+		expect(accept).toContain('.png');
+		expect(accept).toContain('.jpg');
+		expect(accept).toContain('.webp');
+		expect(accept).toContain('image/png');
+		expect(accept).not.toContain('.gif');
 	});
 
 	it('disables attachment selection while streaming or at the three-file limit', async () => {

@@ -4,15 +4,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { MAX_ATTACHMENT_FILE_SIZE } from '../api/files';
 import { AppError } from '../services/errors/AppError';
 import {
+	IMAGE_ORIGINAL_NOT_STORED_WARNING,
 	ATTACHMENT_RESULTS_STORAGE_KEY,
 	saveAttachmentResults,
 	type AttachmentStorageLike,
 } from '../services/storage/attachmentStorage';
 import type {
 	DocumentAttachment,
+	ImageAttachment,
 	ParsedDocument,
+	VisionResult,
 } from '../types/attachment';
-import { useAttachments, type AttachmentParser } from './useAttachments';
+import {
+	useAttachments,
+	type AttachmentParser,
+	type ImageAnalyzer,
+} from './useAttachments';
 
 class MemoryStorage implements AttachmentStorageLike {
 	readonly values = new Map<string, string>();
@@ -62,6 +69,32 @@ const persistedAttachment = (
 	...overrides,
 });
 
+const visionResult = (
+	overrides: Partial<VisionResult> = {},
+): VisionResult => ({
+	summary: '一张包含代码编辑器的截图',
+	extractedText: 'TypeError: boom',
+	objects: ['代码编辑器', '终端'],
+	warnings: [],
+	...overrides,
+});
+
+const persistedImageAttachment = (
+	overrides: Partial<ImageAttachment> = {},
+): ImageAttachment => ({
+	id: 'stored-image',
+	kind: 'image',
+	status: 'ready',
+	name: 'stored.png',
+	mimeType: 'image/png',
+	size: 128,
+	result: visionResult(),
+	warnings: [],
+	createdAt: 3,
+	updatedAt: 4,
+	...overrides,
+});
+
 const flushAsyncWork = async () => {
 	await new Promise(resolve => setTimeout(resolve, 0));
 	await Promise.resolve();
@@ -107,6 +140,121 @@ describe('useAttachments', () => {
 		expect(raw).toContain('parsed text');
 		expect(raw).not.toContain('File');
 		expect(raw).not.toContain('blob:');
+	});
+
+	it.each(['image/jpeg', 'image/png', 'image/webp'])(
+		'dispatches %s to the vision analyzer instead of the document parser',
+		async mimeType => {
+			let finishAnalysis: ((result: VisionResult) => void) | undefined;
+			const analyzer = vi.fn<ImageAnalyzer>().mockImplementation(
+				() =>
+					new Promise(resolve => {
+						finishAnalysis = resolve;
+					}),
+			);
+			const parser = vi.fn<AttachmentParser>();
+			const createObjectURL = vi.fn(() => 'blob:runtime-preview');
+			const attachments = useAttachments({
+				storage: new MemoryStorage(),
+				parseFile: parser,
+				analyzeImage: analyzer,
+				createObjectURL,
+				revokeObjectURL: vi.fn(),
+				createId: () => 'image-id',
+			});
+			const file = new File(['pixels'], 'screenshot.png', { type: mimeType });
+
+			attachments.queueFiles([file]);
+			expect(attachments.records.value[0]).toMatchObject({
+				kind: 'image',
+				status: 'uploading',
+				previewUrl: 'blob:runtime-preview',
+			});
+			await Promise.resolve();
+			expect(attachments.records.value[0].status).toBe('analyzing');
+			expect(analyzer).toHaveBeenCalledWith(file, expect.any(AbortSignal));
+			expect(parser).not.toHaveBeenCalled();
+
+			finishAnalysis?.(visionResult());
+			await flushAsyncWork();
+			expect(attachments.records.value[0]).toMatchObject({
+				kind: 'image',
+				status: 'ready',
+				result: visionResult(),
+			});
+			expect(createObjectURL).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it('accepts a VisionProvider as the image analyzer dependency', async () => {
+		const provider = {
+			analyze: vi.fn().mockResolvedValue(visionResult()),
+		};
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			visionProvider: provider,
+			createId: () => 'provider-image',
+			createObjectURL: () => 'blob:provider-image',
+			revokeObjectURL: vi.fn(),
+		});
+		const file = new File(['pixels'], 'screen.png', { type: 'image/png' });
+
+		attachments.queueFiles([file]);
+		await flushAsyncWork();
+
+		expect(provider.analyze).toHaveBeenCalledWith(
+			file,
+			expect.any(AbortSignal),
+		);
+		expect(attachments.records.value[0].status).toBe('ready');
+	});
+
+	it('rejects unsupported image MIME types before analysis', async () => {
+		const analyzer = vi.fn<ImageAnalyzer>();
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createId: () => 'gif-id',
+		});
+
+		attachments.queueFiles([
+			new File(['gif'], 'animated.gif', { type: 'image/gif' }),
+		]);
+		await flushAsyncWork();
+
+		expect(analyzer).not.toHaveBeenCalled();
+		expect(attachments.records.value[0]).toMatchObject({
+			kind: 'image',
+			status: 'error',
+			errorCode: 'UNSUPPORTED_IMAGE_TYPE',
+		});
+	});
+
+	it('rejects empty and over-10MB images before invoking vision analysis', async () => {
+		const analyzer = vi.fn<ImageAnalyzer>();
+		let id = 0;
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createId: () => `invalid-image-${++id}`,
+		});
+		const oversized = {
+			name: 'large.webp',
+			type: 'image/webp',
+			size: MAX_ATTACHMENT_FILE_SIZE + 1,
+		} as File;
+
+		attachments.queueFiles([
+			new File([], 'empty.png', { type: 'image/png' }),
+			oversized,
+		]);
+		await flushAsyncWork();
+
+		expect(analyzer).not.toHaveBeenCalled();
+		expect(attachments.records.value.map(record => record.errorCode)).toEqual([
+			'EMPTY_FILE',
+			'FILE_TOO_LARGE',
+		]);
 	});
 
 	it('creates unique IDs even when the injected ID factory collides', () => {
@@ -243,6 +391,39 @@ describe('useAttachments', () => {
 		});
 	});
 
+	it('retries an image with the same runtime File and Object URL', async () => {
+		const analyzer = vi
+			.fn<ImageAnalyzer>()
+			.mockRejectedValueOnce(new Error('temporary failure'))
+			.mockResolvedValueOnce(visionResult());
+		const createObjectURL = vi.fn(() => 'blob:stable-preview');
+		const revokeObjectURL = vi.fn();
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createObjectURL,
+			revokeObjectURL,
+			createId: () => 'retry-image',
+		});
+		const file = new File(['pixels'], 'screen.png', { type: 'image/png' });
+		attachments.queueFiles([file]);
+		await flushAsyncWork();
+		expect(attachments.records.value[0].status).toBe('error');
+
+		expect(attachments.retry('retry-image')).toBe(true);
+		await flushAsyncWork();
+
+		expect(analyzer).toHaveBeenCalledTimes(2);
+		expect(analyzer.mock.calls[0][0]).toBe(file);
+		expect(analyzer.mock.calls[1][0]).toBe(file);
+		expect(createObjectURL).toHaveBeenCalledTimes(1);
+		expect(revokeObjectURL).not.toHaveBeenCalled();
+		expect(attachments.records.value[0]).toMatchObject({
+			status: 'ready',
+			previewUrl: 'blob:stable-preview',
+		});
+	});
+
 	it('explains that a loaded attachment cannot retry without its original File', () => {
 		const storage = new MemoryStorage();
 		expect(saveAttachmentResults(storage, [persistedAttachment()]).ok).toBe(true);
@@ -275,6 +456,32 @@ describe('useAttachments', () => {
 			JSON.parse(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY) || '{}')
 				.attachments,
 		).toEqual([]);
+	});
+
+	it('revokes every image Object URL exactly once across remove and dispose', async () => {
+		const revokeObjectURL = vi.fn();
+		let id = 0;
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: async () => visionResult(),
+			createObjectURL: file => `blob:${file.name}`,
+			revokeObjectURL,
+			createId: () => `preview-${++id}`,
+		});
+		attachments.queueFiles([
+			new File(['one'], 'one.png', { type: 'image/png' }),
+			new File(['two'], 'two.webp', { type: 'image/webp' }),
+		]);
+		await flushAsyncWork();
+
+		expect(attachments.remove('preview-1')).toBe(true);
+		attachments.dispose();
+		attachments.dispose();
+
+		expect(revokeObjectURL.mock.calls).toEqual([
+			['blob:one.png'],
+			['blob:two.webp'],
+		]);
 	});
 
 	it('filters ready records by requested IDs', () => {
@@ -313,6 +520,51 @@ describe('useAttachments', () => {
 			status: 'ready',
 			text: 'parsed text',
 		});
+	});
+
+	it('releases an image File without revoking its runtime preview URL', async () => {
+		const revokeObjectURL = vi.fn();
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: async () => visionResult(),
+			createObjectURL: () => 'blob:keep-preview',
+			revokeObjectURL,
+			createId: () => 'release-image',
+		});
+		attachments.queueFiles([
+			new File(['pixels'], 'screen.png', { type: 'image/png' }),
+		]);
+		await flushAsyncWork();
+
+		attachments.releaseOriginalFiles(['release-image']);
+
+		expect(attachments.hasOriginalFile('release-image')).toBe(false);
+		expect(revokeObjectURL).not.toHaveBeenCalled();
+		expect(attachments.records.value[0]).toMatchObject({
+			status: 'ready',
+			previewUrl: 'blob:keep-preview',
+			result: visionResult(),
+		});
+	});
+
+	it('loads persisted image analysis without recreating the original preview', () => {
+		const storage = new MemoryStorage();
+		expect(
+			saveAttachmentResults(storage, [persistedImageAttachment()]).ok,
+		).toBe(true);
+		const createObjectURL = vi.fn(() => 'blob:should-not-be-created');
+		const attachments = useAttachments({ storage, createObjectURL });
+
+		attachments.load();
+
+		const [record] = attachments.records.value;
+		expect(record.kind).toBe('image');
+		if (record.kind !== 'image') throw new Error('expected image');
+		expect(record.status).toBe('ready');
+		expect(record.result).toEqual(visionResult());
+		expect(record.previewUrl).toBeUndefined();
+		expect(record.warnings).toContain(IMAGE_ORIGINAL_NOT_STORED_WARNING);
+		expect(createObjectURL).not.toHaveBeenCalled();
 	});
 
 	it('surfaces persistence quota failures without losing the runtime result', async () => {

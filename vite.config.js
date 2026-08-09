@@ -5,6 +5,7 @@ import Components from 'unplugin-vue-components/vite';
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
 import { resolveModelMode } from './functions/_shared/modelMode.ts';
 import { onRequestPost as parseFileRequest } from './functions/api/files/parse.ts';
+import { onRequestPost as analyzeVisionRequest } from './functions/api/vision/analyze.ts';
 
 const MAX_MULTIPART_REQUEST_SIZE = 11 * 1024 * 1024;
 
@@ -210,6 +211,98 @@ const fileParseDevProxy = () => ({
 	},
 });
 
+const createWorkersAIDevBinding = env => {
+	const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+	const apiToken = env.CLOUDFLARE_API_TOKEN;
+	if (!accountId || !apiToken) return undefined;
+
+	return {
+		async run(model, input) {
+			const upstream = await fetch(
+				`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
+				{
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${apiToken}`,
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify(input),
+				},
+			);
+			const payload = await upstream.json().catch(() => undefined);
+			if (
+				!upstream.ok ||
+				!payload ||
+				typeof payload !== 'object' ||
+				!('result' in payload)
+			) {
+				throw new Error('Workers AI request failed');
+			}
+			return payload.result;
+		},
+	};
+};
+
+const visionAnalyzeDevProxy = env => ({
+	name: 'vision-analyze-dev-proxy',
+	configureServer(server) {
+		server.middlewares.use('/api/vision/analyze', async (request, response) => {
+			if (request.method !== 'POST') {
+				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed');
+				return;
+			}
+			const contentLength = Number(request.headers['content-length']);
+			if (
+				Number.isFinite(contentLength) &&
+				contentLength > MAX_MULTIPART_REQUEST_SIZE
+			) {
+				sendJsonError(
+					response,
+					413,
+					'FILE_TOO_LARGE',
+					'单张图片不能超过 10MB',
+				);
+				return;
+			}
+
+			try {
+				const body = await readBinaryRequestBody(request);
+				const headers = new Headers();
+				for (const name of ['content-type', 'content-length']) {
+					const value = request.headers[name];
+					if (typeof value === 'string') headers.set(name, value);
+				}
+				const webRequest = new Request(
+					'http://localhost/api/vision/analyze',
+					{ method: 'POST', headers, body },
+				);
+				const result = await analyzeVisionRequest({
+					request: webRequest,
+					env: {
+						AI: createWorkersAIDevBinding(env),
+						VISION_MODEL: env.VISION_MODEL,
+					},
+				});
+				response.statusCode = result.status;
+				result.headers.forEach((value, name) => response.setHeader(name, value));
+				response.end(Buffer.from(await result.arrayBuffer()));
+			} catch (error) {
+				if (response.writableEnded) return;
+				sendJsonError(
+					response,
+					error?.code === 'FILE_TOO_LARGE' ? 413 : 500,
+					error?.code === 'FILE_TOO_LARGE'
+						? 'FILE_TOO_LARGE'
+						: 'VISION_ANALYSIS_FAILED',
+					error?.code === 'FILE_TOO_LARGE'
+						? error.message
+						: '图片分析服务暂时不可用，请稍后重试',
+				);
+			}
+		});
+	},
+});
+
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
 
@@ -218,6 +311,7 @@ export default defineConfig(({ mode }) => {
 		plugins: [
 			vue(),
 			fileParseDevProxy(),
+			visionAnalyzeDevProxy(env),
 			deepSeekDevProxy(env),
 			AutoImport({ resolvers: [ElementPlusResolver()] }),
 			Components({ resolvers: [ElementPlusResolver()] }),

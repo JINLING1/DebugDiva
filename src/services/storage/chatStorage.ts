@@ -202,7 +202,11 @@ const normalizeContent = (value: unknown): MessageContent | null => {
 		content.type === 'image' &&
 		typeof content.attachmentId === 'string'
 	) {
-		return { ...content, previewUrl: undefined };
+		return {
+			type: 'image',
+			attachmentId: content.attachmentId,
+			alt: typeof content.alt === 'string' ? content.alt : undefined,
+		};
 	}
 	if (
 		content.type === 'citation' &&
@@ -359,5 +363,22 @@ export const saveChatSessions = (
 	storage: StorageLike,
 	sessions: ChatSession[],
 ) => {
-	storage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+	const persistableSessions = sessions.map(session => ({
+		...session,
+		messages: session.messages.map(message => ({
+			...message,
+			contents: message.contents.map(content => {
+				if (content.type !== 'image') return content;
+				return {
+					type: 'image' as const,
+					attachmentId: content.attachmentId,
+					alt: content.alt,
+				};
+			}),
+		})),
+	}));
+	storage.setItem(
+		CHAT_SESSIONS_STORAGE_KEY,
+		JSON.stringify(persistableSessions),
+	);
 };

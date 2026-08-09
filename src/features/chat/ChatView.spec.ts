@@ -7,7 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatView from './ChatView.vue';
 import { useAttachments } from '../../composables/useAttachments';
 import { useChatStore } from '../../store/chat';
-import type { DocumentAttachment } from '../../types/attachment';
+import type {
+	ChatAttachment,
+	DocumentAttachment,
+} from '../../types/attachment';
 import type { ChatMessage } from '../../types/chat';
 
 const messageMocks = vi.hoisted(() => ({
@@ -28,6 +31,7 @@ const ChatWindowStub = defineComponent({
 		streaming: Boolean,
 		modelMode: String,
 		attachments: { type: Array, default: () => [] },
+		attachmentResults: { type: Array, default: () => [] },
 		attachmentsDisabled: Boolean,
 	},
 	emits: [
@@ -64,7 +68,7 @@ const createAttachment = (
 });
 
 const createAttachmentManager = () => ({
-	records: shallowRef<DocumentAttachment[]>([]),
+	records: shallowRef<ChatAttachment[]>([]),
 	storageError: shallowRef<{ code: string; message: string }>(),
 	load: vi.fn().mockReturnValue({
 		attachments: [],
@@ -169,7 +173,7 @@ describe('ChatView Phase 4 attachment integration', () => {
 			'已停用 1 个解析结果缺失的附件，请重新选择文件。',
 		);
 		expect(
-			(chatWindow.props('attachments') as DocumentAttachment[]).map(
+			(chatWindow.props('attachments') as ChatAttachment[]).map(
 				attachment => attachment.id,
 			),
 		).toEqual(['available']);

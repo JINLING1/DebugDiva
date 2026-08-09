@@ -6,6 +6,7 @@ import {
 	loadChatSessions,
 	migrateLegacySessions,
 	normalizeV2Sessions,
+	saveChatSessions,
 	type StorageLike,
 } from './chatStorage';
 
@@ -193,5 +194,80 @@ describe('chat storage migration', () => {
 		expect(result.recoveredFromError).toBe(true);
 		expect(result.migrated).toBe(false);
 		expect(storage.getItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
+	});
+
+	it('never persists image preview URLs or runtime-only image fields', () => {
+		const storage = new MemoryStorage();
+		saveChatSessions(storage, [
+			{
+				id: 'vision-session',
+				title: '图片分析',
+				createdAt: 1,
+				updatedAt: 2,
+				activeAttachmentIds: ['image-1'],
+				messages: [
+					{
+						id: 'user-image',
+						role: 'user',
+						status: 'completed',
+						createdAt: 1,
+						contents: [
+							{
+								type: 'image',
+								attachmentId: 'image-1',
+								previewUrl: 'blob:https://example.test/private',
+								alt: '报错截图',
+								base64: 'data:image/png;base64,SECRET',
+							} as never,
+						],
+					},
+				],
+			},
+		]);
+
+		const raw = storage.getItem(CHAT_SESSIONS_STORAGE_KEY) || '';
+		expect(raw).not.toContain('blob:');
+		expect(raw).not.toContain('base64');
+		expect(raw).not.toContain('data:image');
+		expect(JSON.parse(raw)[0].messages[0].contents[0]).toEqual({
+			type: 'image',
+			attachmentId: 'image-1',
+			alt: '报错截图',
+		});
+	});
+
+	it('drops runtime-only image fields while loading stored sessions', () => {
+		const [session] = normalizeV2Sessions([
+			{
+				id: 'stored-image-session',
+				title: '图片分析',
+				createdAt: 1,
+				updatedAt: 2,
+				activeAttachmentIds: ['image-1'],
+				messages: [
+					{
+						id: 'stored-image-message',
+						role: 'user',
+						status: 'completed',
+						createdAt: 1,
+						contents: [
+							{
+								type: 'image',
+								attachmentId: 'image-1',
+								alt: '报错截图',
+								previewUrl: 'blob:https://example.test/private',
+								base64: 'data:image/png;base64,SECRET',
+							},
+						],
+					},
+				],
+			},
+		]);
+
+		expect(session.messages[0].contents[0]).toEqual({
+			type: 'image',
+			attachmentId: 'image-1',
+			alt: '报错截图',
+		});
 	});
 });
