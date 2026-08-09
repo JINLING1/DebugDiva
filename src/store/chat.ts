@@ -8,6 +8,11 @@ import type {
 	ChatSession,
 	MessageStatus,
 } from '../types/chat';
+import {
+	MAX_ACTIVE_ATTACHMENT_TEXT_LENGTH,
+	MAX_ATTACHMENTS_PER_MESSAGE,
+	type DocumentAttachment,
+} from '../types/attachment';
 import type { ProviderMessage } from '../types/provider';
 import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
 import {
@@ -25,6 +30,7 @@ import {
 	loadChatSessions,
 	saveChatSessions,
 } from '../services/storage/chatStorage';
+import { loadAttachmentResults } from '../services/storage/attachmentStorage';
 import { useSettingsStore } from './settings';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -50,11 +56,35 @@ const createTextMessage = (
 	createdAt: Date.now(),
 });
 
+const createUserMessage = (
+	text: string,
+	attachments: readonly DocumentAttachment[] = [],
+): ChatMessage => ({
+	id: createMessageId('user'),
+	role: 'user',
+	status: 'completed',
+	contents: [
+		{ type: 'text', text },
+		...attachments.map(attachment => ({
+			type: 'file' as const,
+			attachmentId: attachment.id,
+			name: attachment.name,
+			mimeType: attachment.mimeType,
+			size: attachment.size,
+		})),
+	],
+	createdAt: Date.now(),
+});
+
+const normalizeAttachmentIds = (ids: readonly string[]): string[] =>
+	[...new Set(ids.filter(id => typeof id === 'string' && id.length > 0))];
+
 export const useChatStore = defineStore('chat', () => {
 	const settingsStore = useSettingsStore();
 	const chatSessions = ref<ChatSession[]>([]);
 	const currentSessionId = ref<string | null>(null);
 	const chatHistory = ref<ChatMessage[]>([]);
+	const activeAttachmentIds = ref<string[]>([]);
 	const isAssistantTyping = ref(false);
 	const isSidebarOpen = ref(window.innerWidth > 768);
 	const initialized = ref(false);
@@ -91,7 +121,7 @@ export const useChatStore = defineStore('chat', () => {
 					createdAt: now,
 					updatedAt: now,
 					messages: clone(chatHistory.value),
-					activeAttachmentIds: [],
+					activeAttachmentIds: clone(activeAttachmentIds.value),
 				});
 			} else {
 				const sessionIndex = chatSessions.value.findIndex(
@@ -100,6 +130,7 @@ export const useChatStore = defineStore('chat', () => {
 				if (sessionIndex !== -1) {
 					const session = chatSessions.value[sessionIndex];
 					session.messages = clone(chatHistory.value);
+					session.activeAttachmentIds = clone(activeAttachmentIds.value);
 					session.updatedAt = now;
 					chatSessions.value.splice(sessionIndex, 1);
 					chatSessions.value.unshift(session);
@@ -126,6 +157,7 @@ export const useChatStore = defineStore('chat', () => {
 
 		currentSessionId.value = null;
 		chatHistory.value = [];
+		activeAttachmentIds.value = [];
 	};
 
 	const startNewChat = () => {
@@ -134,6 +166,7 @@ export const useChatStore = defineStore('chat', () => {
 		}
 		currentSessionId.value = null;
 		chatHistory.value = [];
+		activeAttachmentIds.value = [];
 	};
 
 	const switchSession = (id: string) => {
@@ -144,8 +177,86 @@ export const useChatStore = defineStore('chat', () => {
 		if (session) {
 			currentSessionId.value = id;
 			chatHistory.value = clone(session.messages);
+			activeAttachmentIds.value = clone(session.activeAttachmentIds);
 		}
 	};
+
+	const setActiveAttachmentIds = (ids: readonly string[]) => {
+		activeAttachmentIds.value = normalizeAttachmentIds(ids);
+		const session = chatSessions.value.find(
+			item => item.id === currentSessionId.value,
+		);
+		if (session) {
+			session.activeAttachmentIds = clone(activeAttachmentIds.value);
+			session.updatedAt = Date.now();
+			persistSessionList();
+		}
+	};
+
+	const reconcileActiveAttachmentIds = (
+		availableIds: readonly string[],
+	): string[] => {
+		const available = new Set(availableIds);
+		const missingIds = activeAttachmentIds.value.filter(
+			id => !available.has(id),
+		);
+		if (missingIds.length) {
+			setActiveAttachmentIds(
+				activeAttachmentIds.value.filter(id => available.has(id)),
+			);
+		}
+		return missingIds;
+	};
+
+	const resolveAttachmentContext = (
+		requestedIds: readonly string[],
+		runtimeResults?: readonly DocumentAttachment[],
+	) => {
+		const all = runtimeResults
+			? [...runtimeResults]
+			: loadAttachmentResults(localStorage).attachments;
+		const byId = new Map(
+			all.map(attachment => [attachment.id, attachment]),
+		);
+		const active: DocumentAttachment[] = [];
+
+		for (const id of requestedIds) {
+			const attachment = byId.get(id);
+			if (!attachment) {
+				ElMessage.error('附件解析结果已丢失，请移除后重新选择文件。');
+				return null;
+			}
+			if (attachment.status !== 'ready') {
+				ElMessage.error(`附件“${attachment.name}”尚未解析完成。`);
+				return null;
+			}
+			if (!attachment.text.trim()) {
+				ElMessage.error(
+					`附件“${attachment.name}”未提取到可用文本，扫描版 PDF 暂不支持 OCR。`,
+				);
+				return null;
+			}
+			active.push(attachment);
+		}
+
+		const totalCharacters = active.reduce(
+			(total, attachment) => total + Array.from(attachment.text).length,
+			0,
+		);
+		if (totalCharacters > MAX_ACTIVE_ATTACHMENT_TEXT_LENGTH) {
+			ElMessage.error('当前启用的附件文本总计不能超过 80,000 字符。');
+			return null;
+		}
+
+		return { all, active };
+	};
+
+	const getMessageAttachmentIds = (message: ChatMessage): string[] =>
+		normalizeAttachmentIds(
+			message.contents
+				.filter(content => content.type === 'file')
+				.map(content => content.attachmentId),
+		);
 
 	const deleteSession = (id: string) => {
 		chatSessions.value = chatSessions.value.filter(item => item.id !== id);
@@ -166,6 +277,8 @@ export const useChatStore = defineStore('chat', () => {
 		input = '',
 		userInput = '',
 		updateIndex,
+		attachmentIds,
+		attachmentResults,
 	}: ChatParams = {}) => {
 		if (isAssistantTyping.value) {
 			ElMessage.warning('AI正在输出，请稍后再试。');
@@ -177,6 +290,44 @@ export const useChatStore = defineStore('chat', () => {
 			ElMessage.error('输入不能为空！');
 			return;
 		}
+
+		const isRegeneration = updateIndex !== undefined;
+		const previousUserMessage = isRegeneration
+			? chatHistory.value
+					.slice(0, updateIndex)
+					.reverse()
+					.find(message => message.role === 'user')
+			: undefined;
+		const requestAttachmentIds = isRegeneration
+			? normalizeAttachmentIds(
+					attachmentIds ??
+						(previousUserMessage
+							? getMessageAttachmentIds(previousUserMessage)
+							: []),
+				)
+			: attachmentIds !== undefined
+				? normalizeAttachmentIds(attachmentIds)
+				: [...activeAttachmentIds.value];
+
+		if (requestAttachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+			ElMessage.error(
+				`每条消息最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
+			);
+			return;
+		}
+		if (!isRegeneration && attachmentIds !== undefined) {
+			activeAttachmentIds.value = [...requestAttachmentIds];
+		}
+
+		const attachmentContext = resolveAttachmentContext(
+			requestAttachmentIds,
+			attachmentResults,
+		);
+		if (!attachmentContext) return;
+		const contextOptions = {
+			activeAttachmentIds: requestAttachmentIds,
+			attachmentResults: attachmentContext.all,
+		};
 
 		if (detectImageGenerationIntent(normalizedInput)) {
 			if (updateIndex !== undefined) {
@@ -194,7 +345,7 @@ export const useChatStore = defineStore('chat', () => {
 				setMessageText(target, IMAGE_GENERATION_UNAVAILABLE_MESSAGE);
 			} else {
 				chatHistory.value.push(
-					createTextMessage('user', normalizedInput, 'completed'),
+					createUserMessage(normalizedInput, attachmentContext.active),
 					createTextMessage(
 						'assistant',
 						IMAGE_GENERATION_UNAVAILABLE_MESSAGE,
@@ -217,7 +368,11 @@ export const useChatStore = defineStore('chat', () => {
 				return;
 			}
 
-			requestMessages = buildChatContext(chatHistory.value, updateIndex);
+			requestMessages = buildChatContext(
+				chatHistory.value,
+				updateIndex,
+				contextOptions,
+			);
 			chatHistory.value.splice(updateIndex + 1);
 			target.status = 'pending';
 			target.contents = [];
@@ -227,9 +382,13 @@ export const useChatStore = defineStore('chat', () => {
 			targetIndex = updateIndex;
 		} else {
 			chatHistory.value.push(
-				createTextMessage('user', normalizedInput, 'completed'),
+				createUserMessage(normalizedInput, attachmentContext.active),
 			);
-			requestMessages = buildChatContext(chatHistory.value);
+			requestMessages = buildChatContext(
+				chatHistory.value,
+				chatHistory.value.length,
+				contextOptions,
+			);
 			chatHistory.value.push(createTextMessage('assistant', '', 'pending'));
 			targetIndex = chatHistory.value.length - 1;
 		}
@@ -333,7 +492,10 @@ export const useChatStore = defineStore('chat', () => {
 		ElMessage.success('已停止AI输出。');
 	};
 
-	const handleUpdate = async (index: number) => {
+	const handleUpdate = async (
+		index: number,
+		attachmentResults?: DocumentAttachment[],
+	) => {
 		const previousUserMessage = chatHistory.value
 			.slice(0, index)
 			.reverse()
@@ -347,6 +509,8 @@ export const useChatStore = defineStore('chat', () => {
 		await handleChat({
 			userInput: getMessageText(previousUserMessage),
 			updateIndex: index,
+			attachmentIds: getMessageAttachmentIds(previousUserMessage),
+			attachmentResults,
 		});
 	};
 
@@ -354,6 +518,7 @@ export const useChatStore = defineStore('chat', () => {
 		chatSessions,
 		currentSessionId,
 		chatHistory,
+		activeAttachmentIds,
 		isAssistantTyping,
 		isSidebarOpen,
 		initialized,
@@ -362,6 +527,8 @@ export const useChatStore = defineStore('chat', () => {
 		deleteSession,
 		updateSessionTitle,
 		loadDataFromLocalStorage,
+		setActiveAttachmentIds,
+		reconcileActiveAttachmentIds,
 		handleChat,
 		pauseChat,
 		handleUpdate,

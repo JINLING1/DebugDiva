@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, MessageStatus } from '../../types/chat';
+import type { DocumentAttachment } from '../../types/attachment';
 import {
 	buildChatContext,
 	getMessageText,
@@ -17,6 +18,25 @@ const message = (
 	status,
 	contents: texts.map(text => ({ type: 'text', text })),
 	createdAt: 1,
+});
+
+const attachment = (
+	id: string,
+	text: string,
+	overrides: Partial<DocumentAttachment> = {},
+): DocumentAttachment => ({
+	id,
+	kind: 'document',
+	status: 'ready',
+	name: `${id}.txt`,
+	mimeType: 'text/plain',
+	size: text.length,
+	text,
+	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+	...overrides,
 });
 
 describe('buildChatContext', () => {
@@ -80,6 +100,81 @@ describe('buildChatContext', () => {
 		expect(buildChatContext([assistant])).toEqual([
 			{ role: 'assistant', content: '最终回答' },
 		]);
+	});
+
+	it('injects active attachments before the associated user question in file order', () => {
+		const user = message('u1', 'user', 'completed', ['请审查这些文件']);
+		user.contents.push(
+			{
+				type: 'file',
+				attachmentId: 'second',
+				name: 'second.txt',
+				mimeType: 'text/plain',
+				size: 2,
+			},
+			{
+				type: 'file',
+				attachmentId: 'first',
+				name: 'first.txt',
+				mimeType: 'text/plain',
+				size: 1,
+			},
+		);
+
+		const [providerMessage] = buildChatContext([user], undefined, {
+			activeAttachmentIds: ['first', 'second'],
+			attachmentResults: [attachment('first', 'A'), attachment('second', 'B')],
+		});
+
+		expect(providerMessage.content).toContain(
+			'[附件开始]\n文件名：second.txt\n文件类型：text/plain\n内容：\nB\n[附件结束]',
+		);
+		expect(providerMessage.content.indexOf('second.txt')).toBeLessThan(
+			providerMessage.content.indexOf('first.txt'),
+		);
+		expect(providerMessage.content).toMatch(/\[附件结束\]\n\n用户问题：请审查这些文件$/);
+	});
+
+	it('does not inject inactive, missing, failed, or empty attachments', () => {
+		const user = message('u1', 'user', 'completed', ['问题']);
+		user.contents.push(
+			{ type: 'file', attachmentId: 'inactive', name: 'i', mimeType: 'text/plain', size: 1 },
+			{ type: 'file', attachmentId: 'failed', name: 'f', mimeType: 'text/plain', size: 1 },
+			{ type: 'file', attachmentId: 'empty', name: 'e', mimeType: 'text/plain', size: 1 },
+		);
+
+		expect(
+			buildChatContext([user], undefined, {
+				activeAttachmentIds: ['failed', 'empty', 'missing'],
+				attachmentResults: [
+					attachment('inactive', 'not active'),
+					attachment('failed', 'bad', { status: 'error' }),
+					attachment('empty', '   '),
+				],
+			}),
+		).toEqual([{ role: 'user', content: '问题' }]);
+	});
+
+	it('injects each attachment once and falls back to the latest user turn after cropping', () => {
+		const first = message('u1', 'user', 'completed', ['第一问']);
+		first.contents.push({
+			type: 'file', attachmentId: 'doc', name: 'doc.txt', mimeType: 'text/plain', size: 3,
+		});
+		const second = message('u2', 'user', 'completed', ['继续分析']);
+		second.contents.push({
+			type: 'file', attachmentId: 'doc', name: 'doc.txt', mimeType: 'text/plain', size: 3,
+		});
+		const options = {
+			activeAttachmentIds: ['doc'],
+			attachmentResults: [attachment('doc', '正文')],
+		};
+
+		const full = buildChatContext([first, second], undefined, options);
+		expect(full.map(item => item.content).join('\n').match(/\[附件开始\]/g)).toHaveLength(1);
+
+		const cropped = buildChatContext([message('u3', 'user', 'completed', ['摘要后的问题'])], undefined, options);
+		expect(cropped[0].content).toContain('正文');
+		expect(cropped[0].content).toMatch(/摘要后的问题$/);
 	});
 
 	it('maps DeepSeek token usage into the domain model', () => {

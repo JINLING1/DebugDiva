@@ -6,12 +6,41 @@ import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
 import type { ChatEvent } from '../types/provider';
 import { getMessageText } from '../services/context/buildChatContext';
 import { IMAGE_GENERATION_UNAVAILABLE_MESSAGE } from '../services/context/detectImageGenerationIntent';
+import { saveAttachmentResults } from '../services/storage/attachmentStorage';
+import type { DocumentAttachment } from '../types/attachment';
 import { useSettingsStore } from './settings';
 import { useChatStore } from './chat';
 
 const createStream = async function* (events: ChatEvent[]) {
 	for (const event of events) yield event;
 };
+
+const attachment = (
+	id: string,
+	text: string,
+	overrides: Partial<DocumentAttachment> = {},
+): DocumentAttachment => ({
+	id,
+	kind: 'document',
+	status: 'ready',
+	name: `${id}.txt`,
+	mimeType: 'text/plain',
+	size: text.length,
+	text,
+	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+	...overrides,
+});
+
+const mockSuccessfulProvider = () =>
+	vi.spyOn(DeepSeekChatProvider.prototype, 'stream').mockImplementation(() =>
+		createStream([
+			{ type: 'text-delta', text: '附件分析完成' },
+			{ type: 'done', finishReason: 'stop' },
+		]),
+	);
 
 describe('chat store provider orchestration', () => {
 	beforeEach(() => {
@@ -127,5 +156,179 @@ describe('chat store provider orchestration', () => {
 		expect(answer.status).toBe('error');
 		expect(answer.errorCode).toBe('RATE_LIMITED');
 		expect(getMessageText(answer)).toBe('请求过于频繁，请稍后重试');
+	});
+
+	it('adds ready document metadata to the message and injects parsed text into provider context', async () => {
+		expect(
+			saveAttachmentResults(localStorage, [
+				attachment('resume', '前端工程师，熟悉 Vue 3。'),
+			]),
+		).toMatchObject({ ok: true });
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+
+		await store.handleChat({
+			input: '请概括这份简历',
+			attachmentIds: ['resume'],
+		});
+
+		expect(streamSpy).toHaveBeenCalledOnce();
+		const request = streamSpy.mock.calls[0][0];
+		expect(request.messages.at(-1)?.content).toBe(
+			[
+				'[附件开始]',
+				'文件名：resume.txt',
+				'文件类型：text/plain',
+				'内容：',
+				'前端工程师，熟悉 Vue 3。',
+				'[附件结束]',
+				'',
+				'用户问题：请概括这份简历',
+			].join('\n'),
+		);
+		expect(store.chatHistory[0].contents).toContainEqual({
+			type: 'file',
+			attachmentId: 'resume',
+			name: 'resume.txt',
+			mimeType: 'text/plain',
+			size: 15,
+		});
+		expect(store.chatSessions[0].activeAttachmentIds).toEqual(['resume']);
+	});
+
+	it('does not call the provider while an active attachment is unavailable or failed', async () => {
+		saveAttachmentResults(localStorage, [
+			attachment('failed', '', {
+				status: 'error',
+				errorCode: 'PARSE_FAILED',
+				errorMessage: '解析失败',
+			}),
+		]);
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+
+		await store.handleChat({ input: '分析文件', attachmentIds: ['failed'] });
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toEqual([]);
+
+		await store.handleChat({ input: '分析文件', attachmentIds: ['missing'] });
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toEqual([]);
+	});
+
+	it('uses the runtime attachment snapshot when persistence is unavailable', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const runtimeAttachment = attachment('runtime', '仅存在于当前页面');
+
+		await store.handleChat({
+			input: '分析当前附件',
+			attachmentIds: ['runtime'],
+			attachmentResults: [runtimeAttachment],
+		});
+
+		expect(streamSpy).toHaveBeenCalledOnce();
+		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain(
+			'仅存在于当前页面',
+		);
+	});
+
+	it('blocks requests when active document text exceeds the 80,000 character total', async () => {
+		saveAttachmentResults(localStorage, [
+			attachment('one', 'a'.repeat(30_000)),
+			attachment('two', 'b'.repeat(30_000)),
+			attachment('three', 'c'.repeat(30_001)),
+		]);
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+
+		await store.handleChat({
+			input: '综合分析',
+			attachmentIds: ['one', 'two', 'three'],
+		});
+
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toEqual([]);
+	});
+
+	it('blocks more than three active attachments even when their text is small', async () => {
+		saveAttachmentResults(localStorage, [
+			attachment('one', '1'),
+			attachment('two', '2'),
+			attachment('three', '3'),
+			attachment('four', '4'),
+		]);
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+
+		await store.handleChat({
+			input: '分析',
+			attachmentIds: ['one', 'two', 'three', 'four'],
+		});
+
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toEqual([]);
+		expect(store.activeAttachmentIds).toEqual([]);
+	});
+
+	it('restores and persists active attachment IDs with their chat session', async () => {
+		saveAttachmentResults(localStorage, [attachment('doc', 'context')]);
+		mockSuccessfulProvider();
+		const store = useChatStore();
+		await store.handleChat({ input: '问题', attachmentIds: ['doc'] });
+		const sessionId = store.currentSessionId!;
+
+		store.startNewChat();
+		expect(store.activeAttachmentIds).toEqual([]);
+		store.switchSession(sessionId);
+		expect(store.activeAttachmentIds).toEqual(['doc']);
+
+		store.setActiveAttachmentIds([]);
+		store.startNewChat();
+		store.switchSession(sessionId);
+		expect(store.activeAttachmentIds).toEqual([]);
+	});
+
+	it('reconciles missing active attachment IDs so a restored session cannot get stuck', async () => {
+		saveAttachmentResults(localStorage, [attachment('doc', 'context')]);
+		mockSuccessfulProvider();
+		const store = useChatStore();
+		await store.handleChat({ input: '问题', attachmentIds: ['doc'] });
+
+		expect(store.reconcileActiveAttachmentIds([])).toEqual(['doc']);
+		expect(store.activeAttachmentIds).toEqual([]);
+		expect(store.chatSessions[0].activeAttachmentIds).toEqual([]);
+	});
+
+	it('regenerates with the attachments recorded on the original user turn', async () => {
+		const firstAttachment = attachment('first', 'FIRST_ATTACHMENT_BODY');
+		const secondAttachment = attachment('second', 'SECOND_ATTACHMENT_BODY');
+		saveAttachmentResults(localStorage, [firstAttachment, secondAttachment]);
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+
+		await store.handleChat({ input: '第一问', attachmentIds: ['first'] });
+		await store.handleChat({ input: '第二问', attachmentIds: ['second'] });
+		expect(
+			store.chatHistory[2].contents.filter(content => content.type === 'file'),
+		).toEqual([
+			{
+				type: 'file',
+				attachmentId: 'second',
+				name: 'second.txt',
+				mimeType: 'text/plain',
+				size: 22,
+			},
+		]);
+
+		await store.handleUpdate(1, [firstAttachment, secondAttachment]);
+
+		const regenerationRequest = streamSpy.mock.calls.at(-1)![0];
+		const serializedContext = regenerationRequest.messages
+			.map(message => message.content)
+			.join('\n');
+		expect(serializedContext).toContain('FIRST_ATTACHMENT_BODY');
+		expect(serializedContext).not.toContain('SECOND_ATTACHMENT_BODY');
+		expect(store.activeAttachmentIds).toEqual(['second']);
 	});
 });

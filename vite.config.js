@@ -4,6 +4,9 @@ import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
 import { resolveModelMode } from './functions/_shared/modelMode.ts';
+import { onRequestPost as parseFileRequest } from './functions/api/files/parse.ts';
+
+const MAX_MULTIPART_REQUEST_SIZE = 11 * 1024 * 1024;
 
 const readRequestBody = request =>
 	new Promise((resolve, reject) => {
@@ -11,6 +14,31 @@ const readRequestBody = request =>
 		request.setEncoding('utf8');
 		request.on('data', chunk => (body += chunk));
 		request.on('end', () => resolve(body));
+		request.on('error', reject);
+	});
+
+const readBinaryRequestBody = (request, maxBytes = MAX_MULTIPART_REQUEST_SIZE) =>
+	new Promise((resolve, reject) => {
+		const chunks = [];
+		let totalBytes = 0;
+		let rejected = false;
+		request.on('data', chunk => {
+			if (rejected) return;
+			const bytes = Buffer.from(chunk);
+			totalBytes += bytes.length;
+			if (totalBytes > maxBytes) {
+				rejected = true;
+				chunks.length = 0;
+				const error = new Error('单个文件不能超过 10MB');
+				error.code = 'FILE_TOO_LARGE';
+				reject(error);
+				return;
+			}
+			chunks.push(bytes);
+		});
+		request.on('end', () => {
+			if (!rejected) resolve(Buffer.concat(chunks, totalBytes));
+		});
 		request.on('error', reject);
 	});
 
@@ -129,6 +157,59 @@ const deepSeekDevProxy = env => ({
 	},
 });
 
+const fileParseDevProxy = () => ({
+	name: 'file-parse-dev-proxy',
+	configureServer(server) {
+		server.middlewares.use('/api/files/parse', async (request, response) => {
+			if (request.method !== 'POST') {
+				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed');
+				return;
+			}
+			const contentLength = Number(request.headers['content-length']);
+			if (
+				Number.isFinite(contentLength) &&
+				contentLength > MAX_MULTIPART_REQUEST_SIZE
+			) {
+				sendJsonError(
+					response,
+					413,
+					'FILE_TOO_LARGE',
+					'单个文件不能超过 10MB',
+				);
+				return;
+			}
+
+			try {
+				const body = await readBinaryRequestBody(request);
+				const headers = new Headers();
+				for (const name of ['content-type', 'content-length']) {
+					const value = request.headers[name];
+					if (typeof value === 'string') headers.set(name, value);
+				}
+				const webRequest = new Request('http://localhost/api/files/parse', {
+					method: 'POST',
+					headers,
+					body,
+				});
+				const result = await parseFileRequest({ request: webRequest });
+				response.statusCode = result.status;
+				result.headers.forEach((value, name) => response.setHeader(name, value));
+				response.end(Buffer.from(await result.arrayBuffer()));
+			} catch (error) {
+				if (response.writableEnded) return;
+				sendJsonError(
+					response,
+					error?.code === 'FILE_TOO_LARGE' ? 413 : 500,
+					error?.code === 'FILE_TOO_LARGE'
+						? 'FILE_TOO_LARGE'
+						: 'PARSE_FAILED',
+					error?.message || '文件解析失败',
+				);
+			}
+		});
+	},
+});
+
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
 
@@ -136,6 +217,7 @@ export default defineConfig(({ mode }) => {
 		envPrefix: 'PUBLIC_',
 		plugins: [
 			vue(),
+			fileParseDevProxy(),
 			deepSeekDevProxy(env),
 			AutoImport({ resolvers: [ElementPlusResolver()] }),
 			Components({ resolvers: [ElementPlusResolver()] }),

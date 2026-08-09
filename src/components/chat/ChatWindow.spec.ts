@@ -4,6 +4,7 @@ import { defineComponent } from 'vue';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import ChatWindow from './ChatWindow.vue';
+import type { DocumentAttachment } from '../../types/attachment';
 import type { ChatMessage } from '../../types/chat';
 
 const DynamicScrollerStub = defineComponent({
@@ -36,12 +37,27 @@ const MarkdownStub = defineComponent({
 
 const ChatComposerStub = defineComponent({
 	name: 'ChatComposer',
-	emits: ['send', 'stop', 'selectFiles', 'modelChange'],
+	props: {
+		attachments: { type: Array, default: () => [] },
+		attachmentsDisabled: Boolean,
+	},
+	emits: [
+		'send',
+		'stop',
+		'selectFiles',
+		'modelChange',
+		'retryAttachment',
+		'cancelAttachment',
+		'removeAttachment',
+	],
 	template: `
 		<div data-testid="composer">
 			<button class="send" @click="$emit('send', 'mock question')">send</button>
 			<button class="stop" @click="$emit('stop')">stop</button>
 			<button class="mode" @click="$emit('modelChange', 'deep')">mode</button>
+			<button class="retry-attachment" @click="$emit('retryAttachment', 'file-1')">retry attachment</button>
+			<button class="cancel-attachment" @click="$emit('cancelAttachment', 'file-2')">cancel attachment</button>
+			<button class="remove-attachment" @click="$emit('removeAttachment', 'file-3')">remove attachment</button>
 		</div>
 	`,
 });
@@ -63,9 +79,25 @@ const messages: ChatMessage[] = [
 	},
 ];
 
-const renderWindow = () =>
+const attachment: DocumentAttachment = {
+	id: 'file-1',
+	kind: 'document',
+	status: 'ready',
+	name: 'context.txt',
+	mimeType: 'text/plain',
+	size: 7,
+	text: 'context',
+	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+};
+
+const renderWindow = (
+	props: Partial<InstanceType<typeof ChatWindow>['$props']> = {},
+) =>
 	mount(ChatWindow, {
-		props: { messages, streaming: false },
+		props: { messages, streaming: false, ...props },
 		global: {
 			stubs: {
 				DynamicScroller: DynamicScrollerStub,
@@ -99,6 +131,25 @@ describe('ChatWindow', () => {
 		expect(wrapper.emitted('send')).toEqual([['mock question']]);
 		expect(wrapper.emitted('stop')).toEqual([[]]);
 		expect(wrapper.emitted('modelChange')).toEqual([['deep']]);
+	});
+
+	it('passes attachments to the composer and forwards their actions', async () => {
+		const wrapper = renderWindow({
+			attachments: [attachment],
+			attachmentsDisabled: false,
+		});
+		const composer = wrapper.getComponent(ChatComposerStub);
+
+		expect(composer.props('attachments')).toEqual([attachment]);
+		expect(composer.props('attachmentsDisabled')).toBe(false);
+
+		await wrapper.get('.retry-attachment').trigger('click');
+		await wrapper.get('.cancel-attachment').trigger('click');
+		await wrapper.get('.remove-attachment').trigger('click');
+
+		expect(wrapper.emitted('retryAttachment')).toEqual([['file-1']]);
+		expect(wrapper.emitted('cancelAttachment')).toEqual([['file-2']]);
+		expect(wrapper.emitted('removeAttachment')).toEqual([['file-3']]);
 	});
 
 	it('forwards message actions by stable message id', async () => {

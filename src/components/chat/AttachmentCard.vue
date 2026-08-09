@@ -1,0 +1,271 @@
+<template>
+	<article
+		class="attachment-card"
+		:class="`is-${attachment.status}`"
+		:data-attachment-id="attachment.id"
+	>
+		<div class="file-icon" aria-hidden="true">📄</div>
+		<div class="attachment-details">
+			<div class="attachment-heading">
+				<strong class="attachment-name" :title="attachment.name">
+					{{ attachment.name }}
+				</strong>
+				<span
+					class="status-label"
+					:data-status="attachment.status"
+					:role="isProcessing ? 'status' : undefined"
+					:aria-live="isProcessing ? 'polite' : undefined"
+				>
+					<span v-if="isProcessing" class="status-spinner" aria-hidden="true" />
+					{{ statusLabel }}
+				</span>
+			</div>
+
+			<p class="attachment-meta">
+				<span>{{ formatFileSize(attachment.size) }}</span>
+				<span v-if="attachment.pageCount">{{ attachment.pageCount }} 页</span>
+			</p>
+
+			<p v-if="attachment.errorMessage" class="attachment-error" role="alert">
+				{{ attachment.errorMessage }}
+			</p>
+
+			<div
+				v-if="attachment.truncated || attachment.warnings.length"
+				class="attachment-warnings"
+				aria-label="附件提示"
+			>
+				<span v-if="attachment.truncated" class="truncated-label">内容已截断</span>
+				<ul v-if="attachment.warnings.length">
+					<li v-for="warning in attachment.warnings" :key="warning">
+						{{ warning }}
+					</li>
+				</ul>
+			</div>
+		</div>
+
+		<div class="attachment-actions">
+			<button
+				v-if="isProcessing"
+				type="button"
+				class="attachment-action"
+				:disabled="disabled"
+				:aria-label="`取消处理 ${attachment.name}`"
+				@click="emit('cancel', attachment.id)"
+			>
+				取消
+			</button>
+			<button
+				v-if="attachment.status === 'error'"
+				type="button"
+				class="attachment-action retry-action"
+				:disabled="disabled"
+				:aria-label="`重试附件 ${attachment.name}`"
+				@click="emit('retry', attachment.id)"
+			>
+				重试
+			</button>
+			<button
+				type="button"
+				class="attachment-action remove-action"
+				:disabled="disabled"
+				:aria-label="`移除附件 ${attachment.name}`"
+				@click="emit('remove', attachment.id)"
+			>
+				移除
+			</button>
+		</div>
+	</article>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import type { DocumentAttachment } from '../../types/attachment';
+
+const props = withDefaults(
+	defineProps<{
+		attachment: DocumentAttachment;
+		disabled?: boolean;
+	}>(),
+	{ disabled: false },
+);
+
+const emit = defineEmits<{
+	retry: [attachmentId: string];
+	cancel: [attachmentId: string];
+	remove: [attachmentId: string];
+}>();
+
+const statusLabels: Record<DocumentAttachment['status'], string> = {
+	uploading: '上传中',
+	parsing: '解析中',
+	analyzing: '分析中',
+	ready: '已就绪',
+	error: '处理失败',
+};
+
+const isProcessing = computed(() =>
+	['uploading', 'parsing', 'analyzing'].includes(props.attachment.status),
+);
+const statusLabel = computed(() => statusLabels[props.attachment.status]);
+
+const formatFileSize = (size: number) => {
+	const safeSize = Number.isFinite(size) ? Math.max(0, size) : 0;
+	if (safeSize < 1024) return `${safeSize} B`;
+
+	const units = ['KB', 'MB', 'GB'];
+	let value = safeSize / 1024;
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex += 1;
+	}
+
+	return `${Number(value.toFixed(value >= 10 ? 0 : 1))} ${units[unitIndex]}`;
+};
+</script>
+
+<style scoped>
+.attachment-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 9px 10px;
+	border: 1px solid var(--el-border-color-light);
+	border-radius: 10px;
+	background: var(--el-fill-color-lighter);
+}
+
+.attachment-card.is-error {
+	border-color: var(--el-color-danger-light-7);
+	background: var(--el-color-danger-light-9);
+}
+
+.file-icon {
+	flex: 0 0 auto;
+	font-size: 20px;
+	line-height: 1.4;
+}
+
+.attachment-details {
+	min-width: 0;
+	flex: 1;
+}
+
+.attachment-heading,
+.attachment-meta,
+.attachment-actions {
+	display: flex;
+	align-items: center;
+}
+
+.attachment-heading {
+	gap: 8px;
+}
+
+.attachment-name {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--el-text-color-primary);
+	font-size: 13px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.status-label {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 4px;
+	color: var(--el-text-color-secondary);
+	font-size: 11px;
+}
+
+.status-label[data-status='ready'] {
+	color: var(--el-color-success);
+}
+
+.status-label[data-status='error'] {
+	color: var(--el-color-danger);
+}
+
+.status-spinner {
+	width: 10px;
+	height: 10px;
+	border: 1.5px solid var(--el-border-color);
+	border-top-color: var(--el-color-primary);
+	border-radius: 50%;
+	animation: attachment-spin 0.8s linear infinite;
+}
+
+.attachment-meta {
+	gap: 8px;
+	margin: 3px 0 0;
+	color: var(--el-text-color-secondary);
+	font-size: 11px;
+}
+
+.attachment-error {
+	margin: 5px 0 0;
+	color: var(--el-color-danger);
+	font-size: 12px;
+}
+
+.attachment-warnings {
+	margin-top: 5px;
+	color: var(--el-color-warning-dark-2);
+	font-size: 11px;
+}
+
+.attachment-warnings ul {
+	padding-left: 16px;
+	margin: 3px 0 0;
+}
+
+.truncated-label {
+	display: inline-block;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--el-color-warning-light-8);
+}
+
+.attachment-actions {
+	flex: 0 0 auto;
+	gap: 4px;
+}
+
+.attachment-action {
+	padding: 3px 5px;
+	font: inherit;
+	font-size: 11px;
+	color: var(--el-text-color-secondary);
+	cursor: pointer;
+	background: transparent;
+	border: 0;
+	border-radius: 4px;
+}
+
+.attachment-action:hover:not(:disabled) {
+	color: var(--el-color-primary);
+	background: var(--el-fill-color);
+}
+
+.attachment-action:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.retry-action {
+	color: var(--el-color-primary);
+}
+
+.remove-action:hover:not(:disabled) {
+	color: var(--el-color-danger);
+}
+
+@keyframes attachment-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+</style>

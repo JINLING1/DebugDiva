@@ -4,6 +4,24 @@ import { mount } from '@vue/test-utils';
 import ElementPlus from 'element-plus';
 import { describe, expect, it } from 'vitest';
 import ChatComposer from './ChatComposer.vue';
+import type { DocumentAttachment } from '../../types/attachment';
+
+const createAttachment = (
+	id: string,
+	status: DocumentAttachment['status'] = 'ready',
+): DocumentAttachment => ({
+	id,
+	kind: 'document',
+	status,
+	name: `${id}.txt`,
+	mimeType: 'text/plain',
+	size: 12,
+	text: status === 'ready' ? 'ready' : '',
+	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+});
 
 const renderComposer = (
 	props: Partial<InstanceType<typeof ChatComposer>['$props']> = {},
@@ -86,6 +104,80 @@ describe('ChatComposer', () => {
 		await input.trigger('change');
 
 		expect(wrapper.emitted('selectFiles')).toEqual([[[file]]]);
+	});
+
+	it('accepts the supported Phase 4 document formats', () => {
+		const wrapper = renderComposer({ attachmentsDisabled: false });
+		const accept = wrapper.get('input[type="file"]').attributes('accept');
+
+		expect(accept).toContain('.vue');
+		expect(accept).toContain('.pdf');
+		expect(accept).toContain('.docx');
+		expect(accept).toContain('application/pdf');
+	});
+
+	it('disables attachment selection while streaming or at the three-file limit', async () => {
+		const wrapper = renderComposer({
+			attachmentsDisabled: false,
+			streaming: true,
+		});
+
+		expect(wrapper.get('input[type="file"]').attributes()).toHaveProperty(
+			'disabled',
+		);
+		expect(wrapper.get('[aria-label="选择附件"]').attributes()).toHaveProperty(
+			'disabled',
+		);
+
+		await wrapper.setProps({
+			streaming: false,
+			attachments: [
+				createAttachment('one'),
+				createAttachment('two'),
+				createAttachment('three'),
+			],
+		});
+
+		expect(wrapper.get('input[type="file"]').attributes()).toHaveProperty(
+			'disabled',
+		);
+	});
+
+	it('blocks sending until every selected attachment is ready', async () => {
+		const wrapper = renderComposer({
+			attachments: [createAttachment('pending', 'parsing')],
+		});
+		const textarea = wrapper.get('textarea');
+		await textarea.setValue('请分析这个文件');
+
+		expect(wrapper.get('[aria-label="发送消息"]').attributes()).toHaveProperty(
+			'disabled',
+		);
+		await textarea.trigger('keydown', { key: 'Enter' });
+		expect(wrapper.emitted('send')).toBeUndefined();
+
+		await wrapper.setProps({ attachments: [createAttachment('pending', 'ready')] });
+		await wrapper.get('[aria-label="发送消息"]').trigger('click');
+		expect(wrapper.emitted('send')).toEqual([['请分析这个文件']]);
+	});
+
+	it('renders attachments above the input and forwards attachment actions', async () => {
+		const wrapper = renderComposer({
+			attachments: [createAttachment('failed', 'error')],
+		});
+
+		const list = wrapper.get('[aria-label="待发送附件"]');
+		const textarea = wrapper.get('textarea');
+		expect(
+			list.element.compareDocumentPosition(textarea.element) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+
+		await wrapper.get('[aria-label="重试附件 failed.txt"]').trigger('click');
+		await wrapper.get('[aria-label="移除附件 failed.txt"]').trigger('click');
+
+		expect(wrapper.emitted('retryAttachment')).toEqual([['failed']]);
+		expect(wrapper.emitted('removeAttachment')).toEqual([['failed']]);
 	});
 
 	it('forwards only a supported model mode', async () => {

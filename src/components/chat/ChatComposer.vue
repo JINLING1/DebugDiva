@@ -4,6 +4,13 @@
 			<div class="chat-composer" :class="dialogState">
 				<div class="input-wrapper">
 					<div class="custom-input-container">
+						<AttachmentList
+							:attachments="attachments"
+							:disabled="streaming"
+							@retry="emit('retryAttachment', $event)"
+							@cancel="emit('cancelAttachment', $event)"
+							@remove="emit('removeAttachment', $event)"
+						/>
 						<el-input
 							v-model="input"
 							class="inner-input"
@@ -29,7 +36,8 @@
 									class="file-input"
 									type="file"
 									multiple
-									:disabled="attachmentsDisabled"
+									:accept="attachmentAccept"
+									:disabled="attachmentSelectionDisabled"
 									@change="handleFileSelection"
 								/>
 								<el-tooltip :content="attachmentTooltip" placement="top">
@@ -37,7 +45,7 @@
 										text
 										circle
 										class="action-btn"
-										:disabled="attachmentsDisabled"
+										:disabled="attachmentSelectionDisabled"
 										aria-label="选择附件"
 										@click="openFilePicker"
 									>
@@ -51,7 +59,7 @@
 								<el-button
 									class="send-btn custom-transparent-btn"
 									:class="{ 'light-button': streaming }"
-									:disabled="!streaming && !input.trim()"
+									:disabled="!streaming && !canSend"
 									:aria-label="streaming ? '停止生成' : '发送消息'"
 									@click="handlePrimaryAction"
 								>
@@ -84,7 +92,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Paperclip, Promotion, VideoPause } from '@element-plus/icons-vue';
+import AttachmentList from './AttachmentList.vue';
 import ModelSelector from './ModelSelector.vue';
+import type { DocumentAttachment } from '../../types/attachment';
 import type { ModelMode } from '../../types/provider';
 
 type DialogState = 'collapsed' | 'expanded' | 'dialog';
@@ -93,22 +103,81 @@ const props = withDefaults(
 	defineProps<{
 		streaming: boolean;
 		hasMessages: boolean;
+		attachments?: DocumentAttachment[];
 		attachmentsDisabled?: boolean;
 		modelMode?: ModelMode;
 	}>(),
-	{ attachmentsDisabled: true, modelMode: 'fast' },
+	{
+		attachments: () => [],
+		attachmentsDisabled: true,
+		modelMode: 'fast',
+	},
 );
 
 const emit = defineEmits<{
 	send: [text: string];
 	stop: [];
 	selectFiles: [files: File[]];
+	retryAttachment: [attachmentId: string];
+	cancelAttachment: [attachmentId: string];
+	removeAttachment: [attachmentId: string];
 	modelChange: [mode: ModelMode];
 }>();
 
 const input = ref('');
 const expanded = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+const attachmentAccept = [
+	'.txt',
+	'.md',
+	'.markdown',
+	'.json',
+	'.js',
+	'.mjs',
+	'.cjs',
+	'.jsx',
+	'.ts',
+	'.mts',
+	'.cts',
+	'.tsx',
+	'.vue',
+	'.css',
+	'.scss',
+	'.sass',
+	'.less',
+	'.html',
+	'.htm',
+	'.xml',
+	'.yaml',
+	'.yml',
+	'.py',
+	'.java',
+	'.c',
+	'.cc',
+	'.cpp',
+	'.h',
+	'.hpp',
+	'.go',
+	'.rs',
+	'.cs',
+	'.php',
+	'.rb',
+	'.sql',
+	'.sh',
+	'.bash',
+	'.pdf',
+	'.docx',
+	'text/*',
+	'application/json',
+	'application/javascript',
+	'application/typescript',
+	'application/xml',
+	'application/x-sh',
+	'application/x-yaml',
+	'application/pdf',
+	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+].join(',');
 
 const suggestedQuestions = [
 	'如何调试 JavaScript 内存泄漏？',
@@ -125,9 +194,24 @@ const showSuggestions = computed(
 	() => !props.hasMessages && expanded.value && !props.streaming,
 );
 
-const attachmentTooltip = computed(() =>
-	props.attachmentsDisabled ? '附件功能将在下一阶段开放' : '选择附件',
+const attachmentSelectionDisabled = computed(
+	() =>
+		props.attachmentsDisabled ||
+		props.streaming ||
+		props.attachments.length >= 3,
 );
+const hasUnreadyAttachments = computed(() =>
+	props.attachments.some(attachment => attachment.status !== 'ready'),
+);
+const canSend = computed(
+	() => Boolean(input.value.trim()) && !hasUnreadyAttachments.value,
+);
+const attachmentTooltip = computed(() => {
+	if (props.attachmentsDisabled) return '附件功能暂不可用';
+	if (props.streaming) return '生成中无法添加附件';
+	if (props.attachments.length >= 3) return '每条消息最多添加 3 个附件';
+	return '选择附件';
+});
 
 watch(
 	() => props.hasMessages,
@@ -141,7 +225,7 @@ const expandComposer = () => {
 };
 
 const submit = (value = input.value) => {
-	if (props.streaming) return;
+	if (props.streaming || hasUnreadyAttachments.value) return;
 	const normalized = value.trim();
 	if (!normalized) return;
 
@@ -164,7 +248,7 @@ const handlePrimaryAction = () => {
 };
 
 const openFilePicker = () => {
-	if (!props.attachmentsDisabled) fileInputRef.value?.click();
+	if (!attachmentSelectionDisabled.value) fileInputRef.value?.click();
 };
 
 const handleFileSelection = (event: Event) => {

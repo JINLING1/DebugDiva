@@ -20,6 +20,9 @@ importers:
       element-plus:
         specifier: ^2.9.3
         version: 2.13.3(vue@3.5.29(typescript@5.9.3))
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -38,6 +41,12 @@ importers:
       prismjs:
         specifier: ^1.29.0
         version: 1.30.0
+      saxes:
+        specifier: 6.0.0
+        version: 6.0.0
+      unpdf:
+        specifier: 1.8.0
+        version: 1.8.0
       vue-router:
         specifier: ^4.0.13
         version: 4.6.4(vue@3.5.29(typescript@5.9.3))
@@ -1585,6 +1594,9 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   figures@3.2.0:
     resolution: {integrity: sha512-yaduQFRKLXYOGgEn6AZau90j3ggSOyiqXU0F9JZfeXYhNa+Jk4X+s45A2zg5jns87GAFa34BBm2kXw4XpNcbdg==}
     engines: {node: '>=8'}
@@ -2517,6 +2529,15 @@ packages:
   universalify@2.0.1:
     resolution: {integrity: sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==}
     engines: {node: '>= 10.0.0'}
+
+  unpdf@1.8.0:
+    resolution: {integrity: sha512-jQlkckbe5nKxRHQdbvo9IKHlU6Cjq00UlxxB8lrCIxvS2o5IbAL1wM+4a1Yc3+BIohg9p5AsoaftwO+G4Aq/qQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@napi-rs/canvas': ^0.1.69 || ^1.0.0
+    peerDependenciesMeta:
+      '@napi-rs/canvas':
+        optional: true
 
   unplugin-auto-import@19.3.0:
     resolution: {integrity: sha512-iIi0u4Gq2uGkAOGqlPJOAMI8vocvjh1clGTfSK4SOrJKrt+tirrixo/FjgBwXQNNdS7ofcr7OxzmOb/RjWxeEQ==}
@@ -4345,6 +4366,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.4
 
+  fflate@0.8.3: {}
+
   figures@3.2.0:
     dependencies:
       escape-string-regexp: 1.0.5
@@ -5258,6 +5281,8 @@ snapshots:
       unplugin-utils: 0.2.5
 
   universalify@2.0.1: {}
+
+  unpdf@1.8.0: {}
 
   unplugin-auto-import@19.3.0(@vueuse/core@10.11.1(vue@3.5.29(typescript@5.9.3))):
     dependencies:

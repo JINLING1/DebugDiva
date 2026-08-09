@@ -8,6 +8,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AttachmentCard: typeof import('./src/components/chat/AttachmentCard.vue')['default']
+    AttachmentList: typeof import('./src/components/chat/AttachmentList.vue')['default']
     ChatComposer: typeof import('./src/components/chat/ChatComposer.vue')['default']
     ChatWindow: typeof import('./src/components/chat/ChatWindow.vue')['default']
     ElAside: typeof import('element-plus/es')['ElAside']
