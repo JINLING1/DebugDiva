@@ -37,7 +37,7 @@
 				v-else-if="message.status === 'error'"
 				class="message-status error-status"
 			>
-				请求失败
+				请求失败<span v-if="message.requestId"> · ID {{ message.requestId }}</span>
 			</span>
 
 			<div v-if="showActions" class="message-actions">

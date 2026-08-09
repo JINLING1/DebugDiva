@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import {
+	MAX_SETTINGS_STORAGE_BYTES,
 	SETTINGS_STORAGE_KEY,
 	useSettingsStore,
 } from './settings';
@@ -58,5 +59,17 @@ describe('settings store', () => {
 
 		expect(store.modelMode).toBe('fast');
 		expect(store.clientId).toMatch(/^anonymous-/);
+	});
+
+	it('rejects oversized settings before parsing without overwriting them', () => {
+		const raw = 'x'.repeat(MAX_SETTINGS_STORAGE_BYTES + 1);
+		localStorage.setItem(SETTINGS_STORAGE_KEY, raw);
+		const store = useSettingsStore();
+
+		store.loadSettings();
+
+		expect(store.modelMode).toBe('fast');
+		expect(store.clientId).toMatch(/^anonymous-/);
+		expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBe(raw);
 	});
 });

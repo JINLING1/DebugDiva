@@ -7,6 +7,8 @@ export const MAX_SUMMARY_ITEM_CHARACTERS = 400;
 export const MAX_SUMMARY_TOTAL_CHARACTERS = 16_000;
 export const MAX_SUMMARY_MESSAGE_ID_CHARACTERS = 128;
 export const MAX_SUMMARY_SESSION_ID_CHARACTERS = 200;
+export const MAX_CONVERSATION_SUMMARIES = 500;
+export const MAX_SUMMARY_STORAGE_BYTES = 512 * 1024;
 
 const SUMMARY_FIELDS = [
 	'userGoals',
@@ -58,6 +60,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const unicodeLength = (value: string): number => Array.from(value).length;
+const byteLength = (value: string): number =>
+	new TextEncoder().encode(value).byteLength;
 
 const isQuotaError = (error: unknown): boolean => {
 	if (!isRecord(error) && !(error instanceof Error)) return false;
@@ -164,6 +168,14 @@ export const loadConversationSummaries = (
 	if (raw === null) {
 		return { summaries: emptySummaryMap(), recoveredFromError: false };
 	}
+	if (byteLength(raw) > MAX_SUMMARY_STORAGE_BYTES) {
+		return {
+			summaries: emptySummaryMap(),
+			recoveredFromError: true,
+			errorCode: 'SUMMARY_STORAGE_TOO_LARGE',
+			error: '会话摘要超过安全读取上限',
+		};
+	}
 
 	try {
 		const parsed: unknown = JSON.parse(raw);
@@ -177,7 +189,7 @@ export const loadConversationSummaries = (
 
 		const summaries = new Map<string, ConversationSummary>();
 		let skipped = 0;
-		for (const value of parsed.entries) {
+		for (const value of parsed.entries.slice(0, MAX_CONVERSATION_SUMMARIES)) {
 			const entry = normalizeEntry(value);
 			if (!entry) {
 				skipped += 1;
@@ -186,6 +198,7 @@ export const loadConversationSummaries = (
 			// Iteration order makes the last valid duplicate authoritative.
 			summaries.set(entry.sessionId, entry.summary);
 		}
+		skipped += Math.max(0, parsed.entries.length - MAX_CONVERSATION_SUMMARIES);
 
 		return {
 			summaries: Object.fromEntries(summaries),
@@ -209,6 +222,14 @@ export const saveConversationSummaries = (
 	storage: SummaryStorageLike,
 	summaries: Readonly<ConversationSummaryMap>,
 ): SaveConversationSummariesResult => {
+	if (Object.keys(summaries).length > MAX_CONVERSATION_SUMMARIES) {
+		return {
+			ok: false,
+			entries: 0,
+			errorCode: 'TOO_MANY_CONVERSATION_SUMMARIES',
+			error: `会话摘要不能超过 ${MAX_CONVERSATION_SUMMARIES} 条`,
+		};
+	}
 	const entries: PersistedSummaryEntry[] = [];
 	for (const [sessionId, value] of Object.entries(summaries)) {
 		if (
@@ -235,10 +256,19 @@ export const saveConversationSummaries = (
 	}
 
 	const envelope: PersistedSummaryEnvelope = { version: 1, entries };
+	const serialized = JSON.stringify(envelope);
+	if (byteLength(serialized) > MAX_SUMMARY_STORAGE_BYTES) {
+		return {
+			ok: false,
+			entries: entries.length,
+			errorCode: 'SUMMARY_STORAGE_TOO_LARGE',
+			error: '会话摘要超过安全存储上限',
+		};
+	}
 	try {
 		storage.setItem(
 			CONVERSATION_SUMMARIES_STORAGE_KEY,
-			JSON.stringify(envelope),
+			serialized,
 		);
 		return { ok: true, entries: entries.length };
 	} catch (error) {
@@ -262,7 +292,8 @@ const loadForUpdate = (
 	const loaded = loadConversationSummaries(storage);
 	if (
 		loaded.errorCode === 'SUMMARY_STORAGE_READ_FAILED' ||
-		loaded.errorCode === 'SUMMARY_STORAGE_CORRUPTED'
+		loaded.errorCode === 'SUMMARY_STORAGE_CORRUPTED' ||
+		loaded.errorCode === 'SUMMARY_STORAGE_TOO_LARGE'
 	) {
 		return {
 			result: {

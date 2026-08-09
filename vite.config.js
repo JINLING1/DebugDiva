@@ -3,7 +3,10 @@ import vue from '@vitejs/plugin-vue';
 import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
-import { resolveModelMode } from './functions/_shared/modelMode.ts';
+import {
+	MAX_CHAT_REQUEST_BYTES,
+	onRequestPost as chatRequest,
+} from './functions/api/chat.ts';
 import { onRequestPost as parseFileRequest } from './functions/api/files/parse.ts';
 import { onRequestPost as analyzeVisionRequest } from './functions/api/vision/analyze.ts';
 import { MAX_SUMMARY_REQUEST_BYTES } from './functions/_shared/conversationSummary.ts';
@@ -61,10 +64,50 @@ const readBinaryRequestBody = (request, maxBytes = MAX_MULTIPART_REQUEST_SIZE) =
 		request.on('error', reject);
 	});
 
-const sendJsonError = (response, status, code, message) => {
+const sendJsonError = (
+	response,
+	status,
+	code,
+	message,
+	retryable = status === 408 || status === 429 || status >= 500,
+) => {
+	const requestId =
+		globalThis.crypto?.randomUUID?.() ??
+		`dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	response.statusCode = status;
 	response.setHeader('Content-Type', 'application/json; charset=utf-8');
-	response.end(JSON.stringify({ error: { code, message } }));
+	response.setHeader('Cache-Control', 'no-store');
+	response.setHeader('X-Content-Type-Options', 'nosniff');
+	response.setHeader('X-Request-Id', requestId);
+	response.end(
+		JSON.stringify({ error: { code, message, requestId, retryable } }),
+	);
+};
+
+const writeWebResponse = async (response, result) => {
+	if (response.destroyed) return;
+	response.statusCode = result.status;
+	result.headers.forEach((value, name) => response.setHeader(name, value));
+	if (!result.body) {
+		response.end();
+		return;
+	}
+
+	const reader = result.body.getReader();
+	try {
+		while (!response.destroyed) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			response.write(Buffer.from(value));
+		}
+		if (response.destroyed) {
+			await reader.cancel().catch(() => undefined);
+			return;
+		}
+		response.end();
+	} finally {
+		reader.releaseLock();
+	}
 };
 
 const deepSeekDevProxy = env => ({
@@ -72,104 +115,62 @@ const deepSeekDevProxy = env => ({
 	configureServer(server) {
 		server.middlewares.use('/api/chat', async (request, response) => {
 			if (request.method !== 'POST') {
-				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed');
-				return;
-			}
-
-			// Legacy VITE_* names are read only by this Node-side proxy. The custom
-			// envPrefix below prevents them from being exposed to browser modules.
-			const apiKey = env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY;
-			const baseUrl = (
-				env.DEEPSEEK_BASE_URL ||
-				env.VITE_DEEPSEEK_BASE_URL ||
-				'https://api.deepseek.com'
-			).replace(/\/$/, '');
-
-			if (!apiKey) {
 				sendJsonError(
 					response,
-					500,
-					'AUTH_FAILED',
-					'本地 DeepSeek API Key 未配置',
+					405,
+					'INVALID_REQUEST',
+					'Method Not Allowed',
+					false,
 				);
 				return;
 			}
 
+			const controller = new AbortController();
+			response.on('close', () => {
+				if (!response.writableEnded) controller.abort();
+			});
 			try {
-				const clientPayload = JSON.parse(await readRequestBody(request));
-				const modeConfig = resolveModelMode(clientPayload.mode);
-				if (!modeConfig) {
-					sendJsonError(response, 400, 'INVALID_MODEL_MODE', '不支持的模型模式');
-					return;
+				const body = await readRequestBody(request, MAX_CHAT_REQUEST_BYTES);
+				const headers = new Headers();
+				for (const name of ['content-type', 'content-length']) {
+					const value = request.headers[name];
+					if (typeof value === 'string') headers.set(name, value);
 				}
-				if (!Array.isArray(clientPayload.messages) || !clientPayload.messages.length) {
-					sendJsonError(response, 400, 'INVALID_REQUEST', 'messages 不能为空');
-					return;
-				}
-				if (
-					clientPayload.clientId !== undefined &&
-					(typeof clientPayload.clientId !== 'string' ||
-						clientPayload.clientId.length > 128)
-				) {
-					sendJsonError(response, 400, 'INVALID_REQUEST', 'clientId 格式无效');
-					return;
-				}
-
-				const controller = new AbortController();
-				response.on('close', () => {
-					if (!response.writableEnded) controller.abort();
-				});
-
-				const upstream = await fetch(`${baseUrl}/chat/completions`, {
+				const webRequest = new Request('http://localhost/api/chat', {
 					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modeConfig.model,
-						messages: clientPayload.messages,
-						thinking: modeConfig.thinking,
-						...('reasoning_effort' in modeConfig
-							? { reasoning_effort: modeConfig.reasoning_effort }
-							: {}),
-						stream: true,
-						stream_options: { include_usage: true },
-					}),
+					headers,
+					body,
 					signal: controller.signal,
 				});
-
-				response.statusCode = upstream.status;
-				response.setHeader(
-					'Content-Type',
-					upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-				);
-				response.setHeader('Cache-Control', 'no-cache, no-transform');
-
-				if (!upstream.body) {
-					response.end();
-					return;
-				}
-
-				const reader = upstream.body.getReader();
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					response.write(value);
-				}
-				response.end();
+				const result = await chatRequest({
+					request: webRequest,
+					env: {
+						// Legacy VITE_* values stay inside this Node-only proxy because
+						// envPrefix exposes only PUBLIC_* values to browser modules.
+						DEEPSEEK_API_KEY:
+							env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY,
+						DEEPSEEK_BASE_URL:
+							env.DEEPSEEK_BASE_URL || env.VITE_DEEPSEEK_BASE_URL,
+					},
+				});
+				await writeWebResponse(response, result);
 			} catch (error) {
-				if (response.writableEnded) return;
-				const invalidJson = error instanceof SyntaxError;
+				if (response.writableEnded || response.destroyed) return;
+				const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
 				sendJsonError(
 					response,
-					invalidJson ? 400 : error?.name === 'AbortError' ? 499 : 500,
-					invalidJson
-						? 'INVALID_REQUEST'
+					tooLarge ? 413 : error?.name === 'AbortError' ? 499 : 500,
+					tooLarge
+						? 'REQUEST_TOO_LARGE'
 						: error?.name === 'AbortError'
 							? 'REQUEST_ABORTED'
 							: 'UPSTREAM_UNAVAILABLE',
-					invalidJson ? '请求体不是有效的 JSON' : error?.message || '代理请求失败',
+					tooLarge
+						? '聊天请求体不能超过 256KB'
+						: error?.name === 'AbortError'
+							? '聊天请求已取消'
+							: '聊天服务暂时不可用',
+					error?.name !== 'AbortError' && !tooLarge,
 				);
 			}
 		});
@@ -216,13 +217,12 @@ const fileParseDevProxy = () => ({
 				response.end(Buffer.from(await result.arrayBuffer()));
 			} catch (error) {
 				if (response.writableEnded) return;
+				const tooLarge = error?.code === 'FILE_TOO_LARGE';
 				sendJsonError(
 					response,
-					error?.code === 'FILE_TOO_LARGE' ? 413 : 500,
-					error?.code === 'FILE_TOO_LARGE'
-						? 'FILE_TOO_LARGE'
-						: 'PARSE_FAILED',
-					error?.message || '文件解析失败',
+					tooLarge ? 413 : 500,
+					tooLarge ? 'FILE_TOO_LARGE' : 'PARSE_FAILED',
+					tooLarge ? '单个文件不能超过 10MB' : '文件解析服务暂时不可用',
 				);
 			}
 		});
@@ -236,27 +236,34 @@ const createWorkersAIDevBinding = env => {
 
 	return {
 		async run(model, input) {
-			const upstream = await fetch(
-				`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
-				{
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiToken}`,
-						'Content-Type': 'application/json',
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 20_000);
+			try {
+				const upstream = await fetch(
+					`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
+					{
+						method: 'POST',
+						headers: {
+							Authorization: `Bearer ${apiToken}`,
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify(input),
+						signal: controller.signal,
 					},
-					body: JSON.stringify(input),
-				},
-			);
-			const payload = await upstream.json().catch(() => undefined);
-			if (
-				!upstream.ok ||
-				!payload ||
-				typeof payload !== 'object' ||
-				!('result' in payload)
-			) {
-				throw new Error('Workers AI request failed');
+				);
+				const payload = await upstream.json().catch(() => undefined);
+				if (
+					!upstream.ok ||
+					!payload ||
+					typeof payload !== 'object' ||
+					!('result' in payload)
+				) {
+					throw new Error('Workers AI request failed');
+				}
+				return payload.result;
+			} finally {
+				clearTimeout(timeout);
 			}
-			return payload.result;
 		},
 	};
 };

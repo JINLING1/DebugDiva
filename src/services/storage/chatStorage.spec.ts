@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	CHAT_SESSIONS_STORAGE_KEY,
 	LEGACY_CHAT_SESSIONS_STORAGE_KEY,
+	MAX_CHAT_SESSIONS,
+	MAX_CHAT_STORAGE_RAW_BYTES,
+	MAX_MESSAGES_PER_SESSION,
 	MIGRATION_BACKUP_STORAGE_KEY,
 	loadChatSessions,
 	migrateLegacySessions,
@@ -13,8 +16,10 @@ import {
 class MemoryStorage implements StorageLike {
 	readonly values = new Map<string, string>();
 	failOnKey?: string;
+	failRead = false;
 
 	getItem(key: string) {
+		if (this.failRead) throw new Error('storage unavailable');
 		return this.values.get(key) ?? null;
 	}
 
@@ -183,6 +188,32 @@ describe('chat storage migration', () => {
 		expect(storage.getItem(MIGRATION_BACKUP_STORAGE_KEY)).toContain('{broken');
 	});
 
+	it('handles storage read failures without throwing', () => {
+		const storage = new MemoryStorage();
+		storage.failRead = true;
+
+		expect(loadChatSessions(storage)).toMatchObject({
+			sessions: [],
+			migrated: false,
+			recoveredFromError: true,
+			errorCode: 'CHAT_STORAGE_READ_FAILED',
+		});
+	});
+
+	it('rejects oversized raw session data before parsing and preserves it', () => {
+		const storage = new MemoryStorage();
+		const raw = 'x'.repeat(MAX_CHAT_STORAGE_RAW_BYTES + 1);
+		storage.setItem(CHAT_SESSIONS_STORAGE_KEY, raw);
+
+		expect(loadChatSessions(storage)).toMatchObject({
+			sessions: [],
+			recoveredFromError: true,
+			errorCode: 'CHAT_STORAGE_TOO_LARGE',
+		});
+		expect(storage.getItem(CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
+		expect(storage.getItem(MIGRATION_BACKUP_STORAGE_KEY)).toBeNull();
+	});
+
 	it('does not remove legacy data when writing v2 fails', () => {
 		const storage = new MemoryStorage();
 		const raw = JSON.stringify(legacySessions);
@@ -233,6 +264,62 @@ describe('chat storage migration', () => {
 			type: 'image',
 			attachmentId: 'image-1',
 			alt: '报错截图',
+		});
+	});
+
+	it('persists only allowlisted fields and bounds active attachment ids', () => {
+		const storage = new MemoryStorage();
+		const session = {
+			id: 'safe-session',
+			title: '安全保存',
+			createdAt: 1,
+			updatedAt: 2,
+			activeAttachmentIds: ['a', 'a', 'b', 'c', 'd'],
+			apiKey: 'sk-session-secret',
+			messages: [
+				{
+					id: 'safe-message',
+					role: 'user',
+					status: 'pending',
+					createdAt: 1,
+					apiKey: 'sk-message-secret',
+					contents: [
+						{
+							type: 'file',
+							attachmentId: 'a',
+							name: 'safe.txt',
+							mimeType: 'text/plain',
+							size: 4,
+							file: { secret: true },
+							rawBase64: 'data:application/octet-stream;base64,PRIVATE',
+							previewUrl: 'blob:https://example.test/private',
+						},
+					],
+					usage: { totalTokens: 3, apiKey: 'sk-usage-secret' },
+				},
+			],
+		} as never;
+
+		saveChatSessions(storage, [session]);
+
+		const raw = storage.getItem(CHAT_SESSIONS_STORAGE_KEY) || '';
+		expect(raw).not.toMatch(/sk-|rawBase64|base64|blob:|previewUrl|\"file\":/i);
+		const [stored] = JSON.parse(raw);
+		expect(stored.activeAttachmentIds).toEqual(['a', 'b', 'c']);
+		expect(stored.messages[0]).toMatchObject({
+			id: 'safe-message',
+			role: 'user',
+			status: 'pending',
+			contents: [
+				{
+					type: 'file',
+					attachmentId: 'a',
+					name: 'safe.txt',
+					mimeType: 'text/plain',
+					size: 4,
+				},
+			],
+			usage: { totalTokens: 3 },
 		});
 	});
 
@@ -328,5 +415,58 @@ describe('chat storage migration', () => {
 				},
 			])[0].summary,
 		).toBeUndefined();
+	});
+
+	it('bounds untrusted stored text and drops malformed usage fields', () => {
+		const [session] = normalizeV2Sessions([
+			{
+				id: 'bounded',
+				title: 't'.repeat(500),
+				createdAt: 1,
+				updatedAt: 2,
+				activeAttachmentIds: [],
+				messages: [
+					{
+						id: 'message',
+						role: 'assistant',
+						status: 'completed',
+						createdAt: 1,
+						contents: [
+							{ type: 'text', text: 'x'.repeat(100_005) },
+						],
+						reasoning: 'r'.repeat(100_005),
+						usage: { totalTokens: 10, prompt: 'secret', nested: {} },
+					},
+				],
+			},
+		]);
+
+		expect(session.title).toHaveLength(200);
+		expect(session.messages[0].contents[0]).toMatchObject({
+			type: 'text',
+			text: 'x'.repeat(100_000),
+		});
+		expect(session.messages[0].reasoning).toHaveLength(100_000);
+		expect(session.messages[0].usage).toEqual({ totalTokens: 10 });
+	});
+
+	it('rejects excessive session and message counts', () => {
+		expect(() =>
+			normalizeV2Sessions(
+				Array.from({ length: MAX_CHAT_SESSIONS + 1 }, () => ({})),
+			),
+		).toThrow(/会话数量/);
+		expect(() =>
+			normalizeV2Sessions([
+				{
+					id: 'too-many-messages',
+					title: '会话',
+					messages: Array.from(
+						{ length: MAX_MESSAGES_PER_SESSION + 1 },
+						() => ({}),
+					),
+				},
+			]),
+		).toThrow(/消息数量/);
 	});
 });

@@ -1,14 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_PARSED_DOCUMENT_TEXT_LENGTH } from '../../api/files';
+import {
+	MAX_VISION_EXTRACTED_TEXT_LENGTH,
+	MAX_VISION_OBJECT_LENGTH,
+	MAX_VISION_OBJECTS,
+	MAX_VISION_SUMMARY_LENGTH,
+	MAX_VISION_WARNING_LENGTH,
+	MAX_VISION_WARNINGS,
+} from '../../api/vision';
 import type {
 	DocumentAttachment,
 	ImageAttachment,
 } from '../../types/attachment';
 import {
 	ATTACHMENT_RESULTS_STORAGE_KEY,
+	ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES,
 	IMAGE_ORIGINAL_NOT_STORED_WARNING,
+	MAX_PERSISTED_ATTACHMENTS,
 	clearAttachmentResults,
 	loadAttachmentResults,
+	retainAttachmentResults,
 	saveAttachmentResults,
 	type AttachmentStorageLike,
 } from './attachmentStorage';
@@ -160,6 +171,21 @@ describe('attachment storage', () => {
 		expect(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe('{broken');
 	});
 
+	it('rejects an oversized raw value before parsing and preserves it', () => {
+		const storage = new MemoryStorage();
+		const raw = 'x'.repeat(ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES + 1);
+		storage.setItem(ATTACHMENT_RESULTS_STORAGE_KEY, raw);
+
+		const result = loadAttachmentResults(storage);
+
+		expect(result).toMatchObject({
+			attachments: [],
+			recoveredFromError: true,
+			errorCode: 'ATTACHMENT_STORAGE_TOO_LARGE',
+		});
+		expect(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe(raw);
+	});
+
 	it('catches storage read and quota failures', () => {
 		const readStorage = new MemoryStorage();
 		readStorage.failRead = true;
@@ -194,6 +220,56 @@ describe('attachment storage', () => {
 		});
 		expect(result.bytes).toBeGreaterThan(100);
 		expect(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe('old-data');
+	});
+
+	it('rejects excessive attachment counts without replacing old data', () => {
+		const storage = new MemoryStorage();
+		storage.setItem(ATTACHMENT_RESULTS_STORAGE_KEY, 'old-data');
+
+		const result = saveAttachmentResults(
+			storage,
+			Array.from({ length: MAX_PERSISTED_ATTACHMENTS + 1 }, (_, index) =>
+				attachment({ id: `attachment-${index}` }),
+			),
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			errorCode: 'TOO_MANY_ATTACHMENT_RESULTS',
+		});
+		expect(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe('old-data');
+	});
+
+	it('bounds persisted vision fields and list counts', () => {
+		const storage = new MemoryStorage();
+		const longObject = 'o'.repeat(MAX_VISION_OBJECT_LENGTH + 5);
+		const longWarning = 'w'.repeat(MAX_VISION_WARNING_LENGTH + 5);
+		const unsafe = imageAttachment({
+			result: {
+				summary: 's'.repeat(MAX_VISION_SUMMARY_LENGTH + 5),
+				extractedText: 't'.repeat(
+					MAX_VISION_EXTRACTED_TEXT_LENGTH + 5,
+				),
+				objects: Array(MAX_VISION_OBJECTS + 5).fill(longObject),
+				warnings: Array(MAX_VISION_WARNINGS + 5).fill(longWarning),
+			},
+		});
+
+		expect(saveAttachmentResults(storage, [unsafe]).ok).toBe(true);
+		const [loaded] = loadAttachmentResults(storage).attachments;
+		if (loaded.kind !== 'image' || !loaded.result) {
+			throw new Error('expected ready image result');
+		}
+		expect(loaded.result.summary).toHaveLength(MAX_VISION_SUMMARY_LENGTH);
+		expect(loaded.result.extractedText).toHaveLength(
+			MAX_VISION_EXTRACTED_TEXT_LENGTH,
+		);
+		expect(loaded.result.objects).toHaveLength(MAX_VISION_OBJECTS);
+		expect(loaded.result.objects[0]).toHaveLength(MAX_VISION_OBJECT_LENGTH);
+		expect(loaded.result.warnings).toHaveLength(MAX_VISION_WARNINGS);
+		expect(loaded.result.warnings[0]).toHaveLength(
+			MAX_VISION_WARNING_LENGTH,
+		);
 	});
 
 	it('bounds overlong persisted text and adds a visible warning', () => {
@@ -262,5 +338,18 @@ describe('attachment storage', () => {
 		storage.setItem(ATTACHMENT_RESULTS_STORAGE_KEY, 'value');
 		expect(clearAttachmentResults(storage)).toBe(true);
 		expect(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBeNull();
+	});
+
+	it('retains only referenced attachment results', () => {
+		const storage = new MemoryStorage();
+		expect(
+			saveAttachmentResults(storage, [attachment(), imageAttachment()]).ok,
+		).toBe(true);
+
+		const result = retainAttachmentResults(storage, ['image-1']);
+
+		expect(result).toMatchObject({ ok: true, changed: 1 });
+		expect(loadAttachmentResults(storage).attachments).toHaveLength(1);
+		expect(loadAttachmentResults(storage).attachments[0].id).toBe('image-1');
 	});
 });

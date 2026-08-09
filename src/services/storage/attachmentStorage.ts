@@ -1,4 +1,12 @@
 import { MAX_PARSED_DOCUMENT_TEXT_LENGTH } from '../../api/files';
+import {
+	MAX_VISION_EXTRACTED_TEXT_LENGTH,
+	MAX_VISION_OBJECT_LENGTH,
+	MAX_VISION_OBJECTS,
+	MAX_VISION_SUMMARY_LENGTH,
+	MAX_VISION_WARNING_LENGTH,
+	MAX_VISION_WARNINGS,
+} from '../../api/vision';
 import type {
 	AttachmentStatus,
 	ChatAttachment,
@@ -10,6 +18,15 @@ import type {
 export const ATTACHMENT_RESULTS_STORAGE_KEY =
 	'debugdiva:attachment-results:v1';
 export const ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES = 2 * 1024 * 1024;
+export const MAX_PERSISTED_ATTACHMENTS = 200;
+
+const MAX_ATTACHMENT_ID_LENGTH = 200;
+const MAX_ATTACHMENT_NAME_LENGTH = 512;
+const MAX_ATTACHMENT_MIME_LENGTH = 128;
+const MAX_ATTACHMENT_WARNING_LENGTH = 500;
+const MAX_ATTACHMENT_WARNINGS = 50;
+const MAX_ATTACHMENT_ERROR_CODE_LENGTH = 128;
+const MAX_ATTACHMENT_ERROR_MESSAGE_LENGTH = 1_000;
 
 const INTERRUPTED_ERROR_CODE = 'ATTACHMENT_PROCESSING_INTERRUPTED';
 const INTERRUPTED_ERROR_MESSAGE =
@@ -36,6 +53,11 @@ export interface SaveAttachmentResultsResult {
 	bytes: number;
 	errorCode?: string;
 	error?: string;
+}
+
+export interface RetainAttachmentResultsResult
+	extends SaveAttachmentResultsResult {
+	changed: number;
 }
 
 interface PersistedAttachmentEnvelope {
@@ -65,11 +87,33 @@ const validTimestamp = (value: unknown, fallback: number): number =>
 	typeof value === 'number' && Number.isFinite(value) && value > 0
 		? value
 		: fallback;
+const truncate = (value: string, maxCharacters: number): string =>
+	Array.from(value).slice(0, maxCharacters).join('');
+
+const optionalBoundedString = (
+	value: unknown,
+	maxCharacters: number,
+): string | undefined =>
+	typeof value === 'string' ? truncate(value, maxCharacters) : undefined;
+
+const normalizeStringList = (
+	value: unknown,
+	maxItems: number,
+	maxCharacters: number,
+): string[] =>
+	Array.isArray(value)
+		? value
+				.filter((item): item is string => typeof item === 'string')
+				.slice(0, maxItems)
+				.map(item => truncate(item, maxCharacters))
+		: [];
 
 const normalizeWarnings = (value: unknown): string[] =>
-	Array.isArray(value)
-		? value.filter((item): item is string => typeof item === 'string')
-		: [];
+	normalizeStringList(
+		value,
+		MAX_ATTACHMENT_WARNINGS,
+		MAX_ATTACHMENT_WARNING_LENGTH,
+	);
 
 const normalizeVisionResult = (value: unknown): VisionResult | undefined => {
 	if (!isRecord(value)) return undefined;
@@ -77,18 +121,27 @@ const normalizeVisionResult = (value: unknown): VisionResult | undefined => {
 		typeof value.summary !== 'string' ||
 		typeof value.extractedText !== 'string' ||
 		!Array.isArray(value.objects) ||
-		!value.objects.every(item => typeof item === 'string') ||
-		!Array.isArray(value.warnings) ||
-		!value.warnings.every(item => typeof item === 'string')
+		!Array.isArray(value.warnings)
 	) {
 		return undefined;
 	}
 
 	return {
-		summary: value.summary,
-		extractedText: value.extractedText,
-		objects: [...value.objects],
-		warnings: [...value.warnings],
+		summary: truncate(value.summary, MAX_VISION_SUMMARY_LENGTH),
+		extractedText: truncate(
+			value.extractedText,
+			MAX_VISION_EXTRACTED_TEXT_LENGTH,
+		),
+		objects: normalizeStringList(
+			value.objects,
+			MAX_VISION_OBJECTS,
+			MAX_VISION_OBJECT_LENGTH,
+		),
+		warnings: normalizeStringList(
+			value.warnings,
+			MAX_VISION_WARNINGS,
+			MAX_VISION_WARNING_LENGTH,
+		),
 	};
 };
 
@@ -104,6 +157,7 @@ export const normalizeDocumentAttachment = (
 	if (
 		typeof value.id !== 'string' ||
 		value.id.length === 0 ||
+		Array.from(value.id).length > MAX_ATTACHMENT_ID_LENGTH ||
 		value.kind !== 'document' ||
 		typeof value.name !== 'string' ||
 		value.name.length === 0 ||
@@ -157,15 +211,21 @@ export const normalizeDocumentAttachment = (
 		id: value.id,
 		kind: 'document',
 		status,
-		name: value.name,
-		mimeType: value.mimeType,
+		name: truncate(value.name, MAX_ATTACHMENT_NAME_LENGTH),
+		mimeType: truncate(value.mimeType, MAX_ATTACHMENT_MIME_LENGTH),
 		size,
 		text,
 		pageCount,
 		truncated,
 		warnings,
-		errorCode,
-		errorMessage,
+		errorCode: optionalBoundedString(
+			errorCode,
+			MAX_ATTACHMENT_ERROR_CODE_LENGTH,
+		),
+		errorMessage: optionalBoundedString(
+			errorMessage,
+			MAX_ATTACHMENT_ERROR_MESSAGE_LENGTH,
+		),
 		createdAt,
 		updatedAt,
 	};
@@ -185,6 +245,7 @@ export const normalizeImageAttachment = (
 	if (
 		typeof value.id !== 'string' ||
 		value.id.length === 0 ||
+		Array.from(value.id).length > MAX_ATTACHMENT_ID_LENGTH ||
 		value.kind !== 'image' ||
 		typeof value.name !== 'string' ||
 		value.name.length === 0 ||
@@ -237,13 +298,19 @@ export const normalizeImageAttachment = (
 		id: value.id,
 		kind: 'image',
 		status,
-		name: value.name,
-		mimeType: value.mimeType,
+		name: truncate(value.name, MAX_ATTACHMENT_NAME_LENGTH),
+		mimeType: truncate(value.mimeType, MAX_ATTACHMENT_MIME_LENGTH),
 		size,
 		result,
 		warnings,
-		errorCode,
-		errorMessage,
+		errorCode: optionalBoundedString(
+			errorCode,
+			MAX_ATTACHMENT_ERROR_CODE_LENGTH,
+		),
+		errorMessage: optionalBoundedString(
+			errorMessage,
+			MAX_ATTACHMENT_ERROR_MESSAGE_LENGTH,
+		),
 		createdAt,
 		updatedAt,
 	};
@@ -304,11 +371,20 @@ export const loadAttachmentResults = (
 	if (raw === null) {
 		return { attachments: [], recoveredFromError: false };
 	}
+	if (byteLength(raw) > ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES) {
+		return {
+			attachments: [],
+			recoveredFromError: true,
+			errorCode: 'ATTACHMENT_STORAGE_TOO_LARGE',
+			error: '附件记录超过 2MB 安全读取上限，请导出会话后清理本地数据',
+		};
+	}
 
 	try {
 		const values = getPersistedArray(JSON.parse(raw));
 		if (!values) throw new Error('附件记录格式无效');
-		const attachments = values
+		const boundedValues = values.slice(0, MAX_PERSISTED_ATTACHMENTS);
+		const attachments = boundedValues
 			.map(value => normalizeChatAttachment(value, now, true))
 			.filter((value): value is ChatAttachment => value !== null);
 		const skipped = values.length - attachments.length;
@@ -335,6 +411,14 @@ export const saveAttachmentResults = (
 	attachments: readonly ChatAttachment[],
 	softLimitBytes = ATTACHMENT_RESULTS_SOFT_LIMIT_BYTES,
 ): SaveAttachmentResultsResult => {
+	if (attachments.length > MAX_PERSISTED_ATTACHMENTS) {
+		return {
+			ok: false,
+			bytes: 0,
+			errorCode: 'TOO_MANY_ATTACHMENT_RESULTS',
+			error: `附件记录不能超过 ${MAX_PERSISTED_ATTACHMENTS} 条`,
+		};
+	}
 	const normalized = attachments
 		.map(value => normalizeChatAttachment(value))
 		.filter((value): value is ChatAttachment => value !== null);
@@ -368,6 +452,43 @@ export const saveAttachmentResults = (
 				error instanceof Error ? error.message : '附件记录保存失败',
 		};
 	}
+};
+
+export const retainAttachmentResults = (
+	storage: AttachmentStorageLike,
+	retainedIds: readonly string[],
+): RetainAttachmentResultsResult => {
+	const loaded = loadAttachmentResults(storage);
+	if (
+		loaded.errorCode === 'ATTACHMENT_STORAGE_READ_FAILED' ||
+		loaded.errorCode === 'ATTACHMENT_STORAGE_CORRUPTED' ||
+		loaded.errorCode === 'ATTACHMENT_STORAGE_TOO_LARGE'
+	) {
+		return {
+			ok: false,
+			bytes: 0,
+			changed: 0,
+			errorCode: loaded.errorCode,
+			error: loaded.error,
+		};
+	}
+
+	const retainedSet = new Set(retainedIds);
+	const retained = loaded.attachments.filter(attachment =>
+		retainedSet.has(attachment.id),
+	);
+	const changed = loaded.attachments.length - retained.length;
+	if (changed === 0) {
+		return {
+			ok: true,
+			bytes: byteLength(
+				JSON.stringify({ version: 1, attachments: retained }),
+			),
+			changed: 0,
+		};
+	}
+
+	return { ...saveAttachmentResults(storage, retained), changed };
 };
 
 export const clearAttachmentResults = (

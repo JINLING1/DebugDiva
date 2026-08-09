@@ -1,7 +1,10 @@
+import { raceWithAbort } from './apiLifecycle';
+
 export const MAX_IMAGE_FILE_SIZE = 10 * 1024 * 1024;
 export const MAX_IMAGE_DIMENSION = 4096;
 export const MAX_IMAGE_PIXELS = 16_777_216;
 export const DEFAULT_VISION_MODEL = '@cf/moondream/moondream3.1-9B-A2B';
+export const VISION_TIMEOUT_MS = 20_000;
 
 export type VisionTask = 'describe' | 'ocr' | 'auto';
 
@@ -420,6 +423,7 @@ export const analyzeImageFile = async (
 	task: VisionTask,
 	ai: WorkersAIBinding | undefined,
 	configuredModel?: string,
+	signal?: AbortSignal,
 ): Promise<VisionResult> => {
 	const image = await inspectImageFile(file);
 	if (!ai || typeof ai.run !== 'function') {
@@ -433,7 +437,7 @@ export const analyzeImageFile = async (
 
 	let response: unknown;
 	try {
-		response = await ai.run(model, {
+		const pending = ai.run(model, {
 			task: 'query',
 			image: `data:${image.mimeType};base64,${toBase64(image.bytes)}`,
 			question: promptForTask(task),
@@ -442,7 +446,15 @@ export const analyzeImageFile = async (
 			max_tokens: 4096,
 			stream: false,
 		});
-	} catch {
+		response = signal ? await raceWithAbort(pending, signal) : await pending;
+	} catch (error) {
+		if (
+			signal?.aborted &&
+			error instanceof Error &&
+			error.name === 'AbortError'
+		) {
+			throw error;
+		}
 		throw new VisionAnalysisError(
 			'VISION_ANALYSIS_FAILED',
 			'图片分析服务暂时不可用，请稍后重试',

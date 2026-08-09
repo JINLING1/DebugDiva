@@ -47,6 +47,7 @@ export interface ChatMessage {
 	contents: MessageContent[];
 	reasoning?: string;
 	errorCode?: string;
+	requestId?: string;
 	usage?: TokenUsage;
 	createdAt: number;
 }

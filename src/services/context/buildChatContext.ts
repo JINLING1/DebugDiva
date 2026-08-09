@@ -123,7 +123,11 @@ export const buildChatContext = (
 	let lastUserHasAttachmentBlock = false;
 	const eligibleMessages = messages
 		.slice(0, endExclusive)
-		.filter(isContextMessage);
+		.filter(
+			message =>
+				(message.role === 'user' || message.role === 'assistant') &&
+				isContextMessage(message),
+		);
 	const summaryBoundary = options.summary
 		? eligibleMessages.findIndex(
 				message => message.id === options.summary?.coveredUntilMessageId,

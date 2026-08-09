@@ -503,6 +503,57 @@ describe('useAttachments', () => {
 		]);
 	});
 
+	it('retains referenced images while revoking orphan previews', async () => {
+		const storage = new MemoryStorage();
+		const revokeObjectURL = vi.fn();
+		let nextId = 0;
+		const attachments = useAttachments({
+			storage,
+			analyzeImage: async () => visionResult(),
+			createId: () => (nextId++ === 0 ? 'keep' : 'drop'),
+			createObjectURL: file => `blob:${file.name}`,
+			revokeObjectURL,
+		});
+		attachments.queueFiles([
+			new File(['one'], 'keep.png', { type: 'image/png' }),
+			new File(['two'], 'drop.png', { type: 'image/png' }),
+		]);
+		await flushAsyncWork();
+
+		expect(attachments.retain(['keep'])).toEqual(['drop']);
+
+		expect(attachments.records.value.map(record => record.id)).toEqual(['keep']);
+		expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+		expect(revokeObjectURL).toHaveBeenCalledWith('blob:drop.png');
+		expect(
+			JSON.parse(storage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY) || '{}')
+				.attachments,
+		).toHaveLength(1);
+	});
+
+	it('aborts processing when an orphan attachment is retained away', async () => {
+		let aborted = false;
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			parseFile: (_file, signal) =>
+				new Promise((_resolve, reject) => {
+					signal.addEventListener('abort', () => {
+						aborted = true;
+						reject(new DOMException('aborted', 'AbortError'));
+					});
+				}),
+			createId: () => 'processing-orphan',
+		});
+		attachments.queueFiles([new File(['data'], 'orphan.txt')]);
+		await Promise.resolve();
+
+		attachments.retain([]);
+		await flushAsyncWork();
+
+		expect(aborted).toBe(true);
+		expect(attachments.records.value).toEqual([]);
+	});
+
 	it('releases original File references without deleting parsed results', async () => {
 		const attachments = useAttachments({
 			storage: new MemoryStorage(),

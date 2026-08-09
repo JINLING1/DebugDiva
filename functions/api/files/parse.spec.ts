@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { onRequestPost } from './parse';
 
 const createMultipartRequest = (files: File[]) => {
@@ -11,6 +11,14 @@ const createMultipartRequest = (files: File[]) => {
 };
 
 describe('POST /api/files/parse', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'info').mockImplementation(() => undefined);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it('returns the documented success envelope', async () => {
 		const response = await onRequestPost({
 			request: createMultipartRequest([
@@ -21,6 +29,7 @@ describe('POST /api/files/parse', () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get('cache-control')).toBe('no-store');
 		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(response.headers.get('x-request-id')).toMatch(/\S+/);
 		expect(await response.json()).toEqual({
 			data: {
 				name: 'hello.txt',
@@ -50,10 +59,12 @@ describe('POST /api/files/parse', () => {
 			]),
 		});
 		expect(multiple.status).toBe(400);
-		expect(await multiple.json()).toEqual({
+		expect(await multiple.json()).toMatchObject({
 			error: {
 				code: 'INVALID_REQUEST',
 				message: '必须且只能上传一个 file 字段',
+				requestId: expect.any(String),
+				retryable: false,
 			},
 		});
 	});
@@ -71,6 +82,9 @@ describe('POST /api/files/parse', () => {
 		expect(response.status).toBe(415);
 		expect(body).toContain('UNSUPPORTED_FILE_TYPE');
 		expect(body).not.toContain('SECRET_BINARY_MARKER');
+		expect(String(vi.mocked(console.info).mock.calls)).not.toContain(
+			'SECRET_BINARY_MARKER',
+		);
 	});
 
 	it('rejects overlong file names before parsing', async () => {

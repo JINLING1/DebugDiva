@@ -76,10 +76,16 @@ describe('MessageItem', () => {
 		expect(wrapper.get('.stopped-status').text()).toBe('已停止');
 
 		await wrapper.setProps({
-			message: createMessage({ status: 'error', errorCode: 'REQUEST_FAILED' }),
+			message: createMessage({
+				status: 'error',
+				errorCode: 'REQUEST_FAILED',
+				requestId: 'req-visible',
+			}),
 		});
 		expect(wrapper.find('.stopped-status').exists()).toBe(false);
-		expect(wrapper.get('.error-status').text()).toBe('请求失败');
+		expect(wrapper.get('.error-status').text()).toBe(
+			'请求失败 · ID req-visible',
+		);
 	});
 
 	it('emits the message id when copying or regenerating a completed reply', async () => {

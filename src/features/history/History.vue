@@ -25,6 +25,12 @@
         </div>
 
         <div class="session-actions" v-if="editingId !== session.id">
+          <button type="button" class="action-button" :aria-label="`导出会话 ${session.title}`"
+            :title="`导出会话 ${session.title}`" @click.stop="handleExport(session)">
+            <el-icon class="action-icon">
+              <Download />
+            </el-icon>
+          </button>
           <el-icon class="action-icon" @click.stop="startEdit(session)">
             <Edit />
           </el-icon>
@@ -34,13 +40,25 @@
         </div>
       </div>
     </div>
+
+    <div class="local-data-actions">
+      <el-button class="clear-local-data-btn" type="danger" text @click="handleClearAllLocalData">
+        清除全部本地数据
+      </el-button>
+      <span class="local-data-hint">清除前建议逐个导出需要保留的会话</span>
+    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { ref, nextTick } from 'vue';
 import { storeToRefs } from 'pinia';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useChatStore } from '../../store/chat';
+import { loadAttachmentResults } from '../../services/storage/attachmentStorage';
+import { downloadConversationExport } from '../../services/export/conversationExport';
+import { clearAllDebugDivaLocalData } from '../../services/storage/localDataManagement';
+import type { ChatSession } from '../../types/chat';
 
 
 const chatStore = useChatStore();
@@ -53,7 +71,7 @@ const editTitleText = ref('');
 const editInputRef = ref<any>(null);
 
 //进入编辑模式
-const startEdit = (session: any) => {
+const startEdit = (session: ChatSession) => {
   editingId.value = session.id;
   editTitleText.value = session.title;
   nextTick(() => {
@@ -70,6 +88,50 @@ const saveEdit = (id: string) => {
 
 const handleDelete = (id: string) => {
   deleteSession(id);
+};
+
+const handleExport = (session: ChatSession) => {
+  try {
+    const attachmentResult = loadAttachmentResults(localStorage);
+    downloadConversationExport(session, attachmentResult.attachments);
+    if (attachmentResult.recoveredFromError) {
+      ElMessage.warning('会话已导出，但部分本地附件记录无法读取。');
+    } else {
+      ElMessage.success('会话 JSON 已导出。');
+    }
+  } catch (error) {
+    console.error('Failed to export conversation:', error);
+    ElMessage.error('会话导出失败，请稍后重试。');
+  }
+};
+
+const handleClearAllLocalData = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '这会删除本机保存的全部会话、历史摘要、附件解析结果、模型设置和主题偏好，且无法撤销。建议先导出需要保留的会话。',
+      '清除全部本地数据？',
+      {
+        type: 'warning',
+        confirmButtonText: '确认清除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    );
+  } catch {
+    return;
+  }
+
+  const result = clearAllDebugDivaLocalData(localStorage);
+  if (!result.ok) {
+    console.error('Failed to clear some local data:', result.failed);
+    ElMessage.error(
+      `部分本地数据清理失败（${result.failed.length} 项），请检查浏览器存储权限后重试。`,
+    );
+    return;
+  }
+
+  ElMessage.success('全部本地数据已清除，页面即将刷新。');
+  window.location.reload();
 };
 </script>
 
@@ -154,6 +216,21 @@ const handleDelete = (id: string) => {
   gap: 8px;
 }
 
+.session-item:focus-within .session-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
 .action-icon {
   font-size: 16px;
   color: #909399;
@@ -187,5 +264,33 @@ const handleDelete = (id: string) => {
 
 .session-list::-webkit-scrollbar-thumb:hover {
   background: var(--el-text-color-placeholder);
+}
+
+.local-data-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 12px 14px;
+  border-top: 1px solid var(--el-border-color-light);
+}
+
+.clear-local-data-btn {
+  width: 100%;
+}
+
+.local-data-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+@media (hover: none) {
+  .session-actions {
+    display: flex;
+    gap: 8px;
+  }
 }
 </style>

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
+import { AppError } from '../services/errors/AppError';
 import {
 	planConversationMemory,
 	useConversationMemory,
@@ -108,11 +109,20 @@ export const useChatStore = defineStore('chat', () => {
 	const isAssistantTyping = ref(false);
 	const isSidebarOpen = ref(window.innerWidth > 768);
 	const initialized = ref(false);
+	const canPruneAttachmentResults = ref(false);
+	const chatStorageWritable = ref(true);
+	const summaryStorageWritable = ref(true);
 
 	const abortController = ref<AbortController | null>(null);
 	let assistantMessageIndex = -1;
 
 	const persistSessionList = () => {
+		if (!chatStorageWritable.value) {
+			ElMessage.error(
+				'本地会话数据无法安全读取，本次内容不会覆盖原始记录。',
+			);
+			return false;
+		}
 		try {
 			saveChatSessions(localStorage, chatSessions.value);
 			return true;
@@ -131,6 +141,9 @@ export const useChatStore = defineStore('chat', () => {
 		);
 
 	const persistConversationSummaries = () => {
+		if (!chatStorageWritable.value || !summaryStorageWritable.value) {
+			return false;
+		}
 		const result = saveConversationSummaries(
 			localStorage,
 			collectConversationSummaries(),
@@ -242,17 +255,22 @@ export const useChatStore = defineStore('chat', () => {
 		if (initialized.value) return;
 
 		const result = loadChatSessions(localStorage);
+		chatStorageWritable.value = !result.recoveredFromError;
+		canPruneAttachmentResults.value = !result.recoveredFromError;
 		chatSessions.value = result.sessions.sort(
 			(a, b) => b.updatedAt - a.updatedAt,
 		);
 		const summaryResult = loadConversationSummaries(localStorage);
+		summaryStorageWritable.value = ![
+			'SUMMARY_STORAGE_READ_FAILED',
+			'SUMMARY_STORAGE_CORRUPTED',
+			'SUMMARY_STORAGE_TOO_LARGE',
+		].includes(summaryResult.errorCode ?? '');
 		const hadEmbeddedSummaries = chatSessions.value.some(session =>
 			Boolean(normalizeConversationSummary(session.summary)),
 		);
-		const canRewriteSummaryStorage = ![
-			'SUMMARY_STORAGE_READ_FAILED',
-			'SUMMARY_STORAGE_CORRUPTED',
-		].includes(summaryResult.errorCode ?? '');
+		const canRewriteSummaryStorage =
+			chatStorageWritable.value && summaryStorageWritable.value;
 		const mergedSummaries: ConversationSummaryMap = {};
 		for (const session of chatSessions.value) {
 			const externalSummary = normalizeConversationSummary(
@@ -502,6 +520,7 @@ export const useChatStore = defineStore('chat', () => {
 				target.reasoning = '';
 				target.usage = undefined;
 				target.errorCode = undefined;
+				target.requestId = undefined;
 				setMessageText(target, IMAGE_GENERATION_UNAVAILABLE_MESSAGE);
 			} else {
 				chatHistory.value.push(
@@ -540,6 +559,7 @@ export const useChatStore = defineStore('chat', () => {
 			target.reasoning = '';
 			target.usage = undefined;
 			target.errorCode = undefined;
+			target.requestId = undefined;
 			targetIndex = updateIndex;
 		} else {
 			chatHistory.value.push(
@@ -567,37 +587,84 @@ export const useChatStore = defineStore('chat', () => {
 		abortController.value = controller;
 
 		try {
-			for await (const event of chatProvider.stream({
-				messages: requestMessages,
-				mode: settingsStore.modelMode,
-				clientId: settingsStore.clientId,
-				signal: controller.signal,
-			})) {
-				if (assistantMessageIndex !== targetIndex) break;
-				const target = chatHistory.value[targetIndex];
-				if (!target) break;
+			let attempt = 0;
+			while (attempt < 2) {
+				let receivedOutput = false;
+				let retryRequested = false;
+				try {
+					for await (const event of chatProvider.stream({
+						messages: requestMessages,
+						mode: settingsStore.modelMode,
+						clientId: settingsStore.clientId,
+						signal: controller.signal,
+					})) {
+						if (assistantMessageIndex !== targetIndex) break;
+						const target = chatHistory.value[targetIndex];
+						if (!target) break;
 
-				switch (event.type) {
-					case 'reasoning-delta':
-						target.status = 'streaming';
-						target.reasoning = (target.reasoning || '') + event.text;
-						break;
-					case 'text-delta':
-						target.status = 'streaming';
-						appendMessageText(target, event.text);
-						break;
-					case 'usage':
-						target.usage = event.usage;
-						break;
-					case 'error':
-						target.status = 'error';
-						target.errorCode = event.error.code;
-						setMessageText(target, event.error.message);
-						break;
-					case 'start':
-					case 'done':
-						break;
+						switch (event.type) {
+							case 'reasoning-delta':
+								receivedOutput = true;
+								target.status = 'streaming';
+								target.reasoning = (target.reasoning || '') + event.text;
+								break;
+							case 'text-delta':
+								receivedOutput = true;
+								target.status = 'streaming';
+								appendMessageText(target, event.text);
+								break;
+							case 'usage':
+								target.usage = event.usage;
+								break;
+							case 'error':
+								if (
+									attempt === 0 &&
+									!receivedOutput &&
+									event.error.retryable &&
+									event.error.status !== undefined &&
+									event.error.status >= 500
+								) {
+									retryRequested = true;
+									break;
+								}
+								target.status = 'error';
+								target.errorCode = event.error.code;
+								target.requestId = event.error.requestId;
+								setMessageText(target, event.error.message);
+								break;
+							case 'start':
+								target.requestId = event.requestId;
+								break;
+							case 'done':
+								break;
+						}
+						if (retryRequested) break;
+					}
+				} catch (error) {
+					if (
+						attempt === 0 &&
+						!receivedOutput &&
+						error instanceof AppError &&
+						error.retryable &&
+						error.status !== undefined &&
+						error.status >= 500
+					) {
+						retryRequested = true;
+					} else {
+						throw error;
+					}
 				}
+
+				if (!retryRequested) break;
+				attempt += 1;
+				const target = chatHistory.value[targetIndex];
+				if (!target || assistantMessageIndex !== targetIndex) break;
+				target.status = 'pending';
+				target.contents = [];
+				target.reasoning = '';
+				target.usage = undefined;
+				target.errorCode = undefined;
+				target.requestId = undefined;
 			}
 
 			if (assistantMessageIndex === targetIndex) {
@@ -620,10 +687,15 @@ export const useChatStore = defineStore('chat', () => {
 				const target = chatHistory.value[targetIndex];
 				if (target) {
 					target.status = 'error';
-					target.errorCode = 'CHAT_REQUEST_FAILED';
+					target.errorCode =
+						error instanceof AppError ? error.code : 'CHAT_REQUEST_FAILED';
+					target.requestId =
+						error instanceof AppError ? error.requestId : undefined;
 					setMessageText(
 						target,
-						error instanceof Error ? error.message : '未知异常',
+						error instanceof AppError
+							? error.message
+							: '聊天请求失败，请稍后重试。',
 					);
 				}
 				saveSessionsToLocalStorage();
@@ -688,6 +760,7 @@ export const useChatStore = defineStore('chat', () => {
 		isAssistantTyping,
 		isSidebarOpen,
 		initialized,
+		canPruneAttachmentResults,
 		startNewChat,
 		switchSession,
 		deleteSession,

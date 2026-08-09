@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_VISION_MODEL, type WorkersAIBinding } from '../../_shared/visionAnalysis';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	DEFAULT_VISION_MODEL,
+	VISION_TIMEOUT_MS,
+	type WorkersAIBinding,
+} from '../../_shared/visionAnalysis';
 import { onRequestPost } from './analyze';
 
 const setUint32BigEndian = (bytes: Uint8Array, offset: number, value: number) => {
@@ -17,13 +21,14 @@ const createPng = (name = 'screen.png') => {
 	return new File([bytes], name, { type: 'image/png' });
 };
 
-const createRequest = (file: File, task?: string) => {
+const createRequest = (file: File, task?: string, signal?: AbortSignal) => {
 	const formData = new FormData();
 	formData.append('file', file);
 	if (task !== undefined) formData.append('task', task);
 	return new Request('https://debugdiva.example/api/vision/analyze', {
 		method: 'POST',
 		body: formData,
+		signal,
 	});
 };
 
@@ -32,6 +37,15 @@ const createAI = (answer: unknown = { answer: '{"summary":"代码编辑器截图
 });
 
 describe('POST /api/vision/analyze', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'info').mockImplementation(() => undefined);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
 	it.each(['describe', 'ocr', 'auto'] as const)(
 		'accepts task=%s and returns the stable success envelope',
 		async task => {
@@ -44,6 +58,7 @@ describe('POST /api/vision/analyze', () => {
 			expect(response.status).toBe(200);
 			expect(response.headers.get('cache-control')).toBe('no-store');
 			expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+			expect(response.headers.get('x-request-id')).toMatch(/\S+/);
 			await expect(response.json()).resolves.toEqual({
 				data: {
 					summary: '代码编辑器截图',
@@ -178,5 +193,52 @@ describe('POST /api/vision/analyze', () => {
 		expect(body).toContain('VISION_ANALYSIS_FAILED');
 		expect(body).not.toContain('SECRET_PROVIDER_STACK');
 		expect(body).not.toContain('SECRET_IMAGE_MARKER');
+		expect(String(vi.mocked(console.info).mock.calls)).not.toContain(
+			'SECRET_IMAGE_MARKER',
+		);
+	});
+
+	it('times out a stalled vision binding with a retryable sanitized error', async () => {
+		vi.useFakeTimers();
+		const ai: WorkersAIBinding = {
+			run: vi.fn().mockReturnValue(new Promise<unknown>(() => undefined)),
+		};
+		const pending = onRequestPost({
+			request: createRequest(createPng('SECRET_TIMEOUT_IMAGE.png')),
+			env: { AI: ai },
+		});
+		for (let index = 0; index < 20 && !vi.mocked(ai.run).mock.calls.length; index += 1) {
+			await vi.advanceTimersByTimeAsync(0);
+		}
+		expect(ai.run).toHaveBeenCalledOnce();
+
+		await vi.advanceTimersByTimeAsync(VISION_TIMEOUT_MS);
+		const response = await pending;
+		expect(response.status).toBe(504);
+		const body = await response.text();
+		expect(body).toContain('REQUEST_TIMEOUT');
+		expect(body).toContain('"retryable":true');
+		expect(body).not.toContain('SECRET_TIMEOUT_IMAGE');
+	});
+
+	it('links client cancellation to a stalled vision binding', async () => {
+		const ai: WorkersAIBinding = {
+			run: vi.fn().mockReturnValue(new Promise<unknown>(() => undefined)),
+		};
+		const controller = new AbortController();
+		const pending = onRequestPost({
+			request: createRequest(createPng(), undefined, controller.signal),
+			env: { AI: ai },
+		});
+		for (let index = 0; index < 20 && !vi.mocked(ai.run).mock.calls.length; index += 1) {
+			await Promise.resolve();
+		}
+		controller.abort();
+
+		const response = await pending;
+		expect(response.status).toBe(499);
+		await expect(response.json()).resolves.toMatchObject({
+			error: { code: 'REQUEST_ABORTED', retryable: false },
+		});
 	});
 });

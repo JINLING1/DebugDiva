@@ -434,6 +434,25 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		return true;
 	};
 
+	const retain = (retainedIds: readonly string[]): string[] => {
+		const retainedSet = new Set(retainedIds);
+		const removedIds = records.value
+			.filter(record => !retainedSet.has(record.id))
+			.map(record => record.id);
+		if (!removedIds.length) return [];
+
+		for (const id of removedIds) {
+			const controller = controllers.get(id);
+			controllers.delete(id);
+			controller?.abort();
+			files.delete(id);
+			releasePreviewUrl(id);
+		}
+		records.value = records.value.filter(record => retainedSet.has(record.id));
+		persist();
+		return removedIds;
+	};
+
 	const load = (): LoadAttachmentResultsResult => {
 		controllers.forEach(controller => controller.abort());
 		controllers.clear();
@@ -501,6 +520,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		retry,
 		cancel,
 		remove,
+		retain,
 		getReadyAttachments,
 		hasOriginalFile,
 		releaseOriginalFiles,

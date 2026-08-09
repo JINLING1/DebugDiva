@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatView from './ChatView.vue';
 import { useAttachments } from '../../composables/useAttachments';
 import { useChatStore } from '../../store/chat';
+import { ATTACHMENT_RESULTS_STORAGE_KEY } from '../../services/storage/attachmentStorage';
+import { CHAT_SESSIONS_STORAGE_KEY } from '../../services/storage/chatStorage';
 import type {
 	ChatAttachment,
 	DocumentAttachment,
@@ -78,6 +80,7 @@ const createAttachmentManager = () => ({
 	retry: vi.fn().mockReturnValue(true),
 	cancel: vi.fn().mockReturnValue(true),
 	remove: vi.fn().mockReturnValue(true),
+	retain: vi.fn().mockReturnValue([]),
 	releaseOriginalFiles: vi.fn(),
 	dispose: vi.fn(),
 });
@@ -235,5 +238,115 @@ describe('ChatView Phase 4 attachment integration', () => {
 		expect(chatStore.activeAttachmentIds).toEqual([]);
 		expect(attachmentManager.remove).toHaveBeenCalledTimes(1);
 		expect(attachmentManager.remove).not.toHaveBeenCalledWith('historical');
+	});
+
+	it('retains attachments referenced by any session and collects orphans', async () => {
+		const { chatStore, attachmentManager } = renderView();
+		attachmentManager.records.value = [
+			createAttachment('shared'),
+			createAttachment('citation-shared'),
+			createAttachment('orphan'),
+		];
+		chatStore.chatSessions = [
+			{
+				id: 'session-a',
+				title: 'A',
+				createdAt: 1,
+				updatedAt: 1,
+				activeAttachmentIds: [],
+				messages: [
+					{
+						id: 'message-a',
+						role: 'user',
+						status: 'completed',
+						createdAt: 1,
+						contents: [
+							{ type: 'text', text: 'shared' },
+							{
+								type: 'file',
+								attachmentId: 'shared',
+								name: 'shared.txt',
+								mimeType: 'text/plain',
+									size: 7,
+							},
+							{
+								type: 'citation',
+								attachmentId: 'citation-shared',
+								name: 'citation.txt',
+								page: 2,
+								excerpt: 'A cited passage',
+							},
+						],
+					},
+				],
+			},
+		];
+		await nextTick();
+
+		expect(attachmentManager.retain).toHaveBeenLastCalledWith([
+			'citation-shared',
+			'shared',
+		]);
+	});
+
+	it('does not delete a record that another session still references', async () => {
+		const { chatStore, chatWindow, attachmentManager } = renderView();
+		attachmentManager.records.value = [createAttachment('shared')];
+		chatStore.chatSessions = [
+			{
+				id: 'other-session',
+				title: 'Other session',
+				createdAt: 1,
+				updatedAt: 1,
+				activeAttachmentIds: [],
+				messages: [
+					{
+						id: 'other-message',
+						role: 'user',
+						status: 'completed',
+						createdAt: 1,
+						contents: [
+							{ type: 'text', text: 'Keep the shared result' },
+							{
+								type: 'file',
+								attachmentId: 'shared',
+								name: 'shared.txt',
+								mimeType: 'text/plain',
+								size: 7,
+							},
+						],
+					},
+				],
+			},
+		];
+		chatStore.setActiveAttachmentIds(['shared']);
+		await nextTick();
+
+		chatWindow.vm.$emit('removeAttachment', 'shared');
+		await nextTick();
+
+		expect(chatStore.activeAttachmentIds).toEqual([]);
+		expect(attachmentManager.remove).not.toHaveBeenCalled();
+		expect(attachmentManager.retain).toHaveBeenLastCalledWith(['shared']);
+	});
+
+	it('does not collect attachment results when session storage is unreadable', async () => {
+		localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, '{broken');
+		const attachmentRaw = JSON.stringify({
+			version: 1,
+			attachments: [{ id: 'must-survive' }],
+		});
+		localStorage.setItem(ATTACHMENT_RESULTS_STORAGE_KEY, attachmentRaw);
+		const { wrapper, chatStore, attachmentManager } = renderView();
+		attachmentManager.records.value = [createAttachment('must-survive')];
+
+		await nextTick();
+
+		expect(chatStore.canPruneAttachmentResults).toBe(false);
+		expect(attachmentManager.retain).not.toHaveBeenCalled();
+		expect(localStorage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe(
+			attachmentRaw,
+		);
+		wrapper.unmount();
 	});
 });

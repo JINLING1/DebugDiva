@@ -37,8 +37,13 @@ const attachmentManager = useAttachments({
 	visionProvider: new WorkersAIVisionProvider(),
 });
 const { records: attachmentRecords, storageError } = attachmentManager;
-const { chatHistory, isAssistantTyping, activeAttachmentIds } =
-	storeToRefs(chatStore);
+const {
+	chatSessions,
+	chatHistory,
+	isAssistantTyping,
+	activeAttachmentIds,
+	canPruneAttachmentResults,
+} = storeToRefs(chatStore);
 const { modelMode } = storeToRefs(settingsStore);
 const {
 	handleChat,
@@ -59,6 +64,36 @@ const activeAttachments = computed(() => {
 		.filter((attachment): attachment is NonNullable<typeof attachment> =>
 			Boolean(attachment),
 		);
+});
+
+const referencedAttachmentIds = computed(() => {
+	const ids = new Set(activeAttachmentIds.value);
+	for (const message of chatHistory.value) {
+		for (const content of message.contents) {
+			if (
+				content.type === 'file' ||
+				content.type === 'image' ||
+				content.type === 'citation'
+			) {
+				ids.add(content.attachmentId);
+			}
+		}
+	}
+	for (const session of chatSessions.value) {
+		session.activeAttachmentIds.forEach(id => ids.add(id));
+		for (const message of session.messages) {
+			for (const content of message.contents) {
+				if (
+					content.type === 'file' ||
+					content.type === 'image' ||
+					content.type === 'citation'
+				) {
+					ids.add(content.attachmentId);
+				}
+			}
+		}
+	}
+	return [...ids].sort();
 });
 
 const handleSend = async (text: string) => {
@@ -106,14 +141,9 @@ const handleRemoveAttachment = (attachmentId: string) => {
 	setActiveAttachmentIds(
 		activeAttachmentIds.value.filter(id => id !== attachmentId),
 	);
-	const referencedByHistory = chatHistory.value.some(message =>
-		message.contents.some(
-			content =>
-				(content.type === 'file' || content.type === 'image') &&
-				content.attachmentId === attachmentId,
-		),
-	);
-	if (!referencedByHistory) attachmentManager.remove(attachmentId);
+	if (!referencedAttachmentIds.value.includes(attachmentId)) {
+		attachmentManager.remove(attachmentId);
+	}
 };
 
 const copyMessage = async (messageId: string) => {
@@ -165,6 +195,15 @@ watch(
 				`已停用 ${missingIds.length} 个解析结果缺失的附件，请重新选择文件。`,
 			);
 		}
+	},
+	{ flush: 'post' },
+);
+
+watch(
+	[referencedAttachmentIds, attachmentRecords, canPruneAttachmentResults],
+	([retainedIds, records, canPrune]) => {
+		if (!canPrune || !records.length) return;
+		attachmentManager.retain(retainedIds);
 	},
 	{ flush: 'post' },
 );

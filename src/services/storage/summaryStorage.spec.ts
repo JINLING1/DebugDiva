@@ -3,9 +3,11 @@ import type { ConversationSummary } from '../../types/chat';
 import {
 	CONVERSATION_SUMMARIES_STORAGE_KEY,
 	loadConversationSummaries,
+	MAX_CONVERSATION_SUMMARIES,
 	MAX_SUMMARY_ITEM_CHARACTERS,
 	MAX_SUMMARY_ITEMS_PER_CATEGORY,
 	MAX_SUMMARY_MESSAGE_ID_CHARACTERS,
+	MAX_SUMMARY_STORAGE_BYTES,
 	removeConversationSummary,
 	retainConversationSummaries,
 	saveConversationSummaries,
@@ -110,6 +112,23 @@ describe('conversation summary storage', () => {
 		expect(storage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe('{broken');
 	});
 
+	it('rejects oversized raw summary data before parsing and preserves it', () => {
+		const storage = new MemoryStorage();
+		const raw = 'x'.repeat(MAX_SUMMARY_STORAGE_BYTES + 1);
+		storage.setItem(CONVERSATION_SUMMARIES_STORAGE_KEY, raw);
+
+		expect(loadConversationSummaries(storage)).toMatchObject({
+			summaries: {},
+			recoveredFromError: true,
+			errorCode: 'SUMMARY_STORAGE_TOO_LARGE',
+		});
+		expect(retainConversationSummaries(storage, [])).toMatchObject({
+			ok: false,
+			errorCode: 'SUMMARY_STORAGE_TOO_LARGE',
+		});
+		expect(storage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(raw);
+	});
+
 	it('reports storage read, write and quota failures', () => {
 		const readStorage = new MemoryStorage();
 		readStorage.failRead = true;
@@ -174,6 +193,25 @@ describe('conversation summary storage', () => {
 			ok: false,
 			errorCode: 'INVALID_SUMMARY_DATA',
 		});
+	});
+
+	it('rejects excessive summary counts without replacing old data', () => {
+		const storage = new MemoryStorage();
+		storage.setItem(CONVERSATION_SUMMARIES_STORAGE_KEY, 'original');
+		const summaries = Object.fromEntries(
+			Array.from({ length: MAX_CONVERSATION_SUMMARIES + 1 }, (_, index) => [
+				`session-${index}`,
+				summary({ updatedAt: index + 1 }),
+			]),
+		);
+
+		expect(saveConversationSummaries(storage, summaries)).toMatchObject({
+			ok: false,
+			errorCode: 'TOO_MANY_CONVERSATION_SUMMARIES',
+		});
+		expect(storage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(
+			'original',
+		);
 	});
 
 	it('enforces the 16,000-character aggregate summary limit', () => {

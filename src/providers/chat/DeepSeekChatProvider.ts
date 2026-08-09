@@ -12,6 +12,7 @@ interface ParsedEvent {
 	events: ChatEvent[];
 	done: boolean;
 	failed?: boolean;
+	receivedDone?: boolean;
 	finishReason?: string;
 }
 
@@ -53,6 +54,17 @@ const statusErrorMessage = (status: number): string => {
 	if (status === 429) return '请求过于频繁，请稍后重试';
 	if (status >= 500) return 'AI 服务暂时不可用';
 	return '聊天请求无效';
+};
+
+const SAFE_STREAM_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+	AUTH_FAILED: 'AI 服务鉴权失败',
+	INSUFFICIENT_BALANCE: 'AI 服务余额不足',
+	RATE_LIMITED: '请求过于频繁，请稍后重试',
+	REQUEST_TIMEOUT: 'AI 服务请求超时',
+	UPSTREAM_UNAVAILABLE: 'AI 服务暂时不可用',
+	INVALID_REQUEST: '聊天请求无效',
+	INVALID_MODEL_MODE: '模型模式无效',
+	STREAM_PARSE_FAILED: 'AI 服务返回了无法解析的流式数据',
 };
 
 const appErrorFromBody = (
@@ -109,9 +121,14 @@ const providerErrorFromPayload = (
 	if (!isRecord(payload.error)) return undefined;
 
 	const error = payload.error;
+	const rawCode = readString(error.code);
+	const code =
+		rawCode && Object.prototype.hasOwnProperty.call(SAFE_STREAM_ERROR_MESSAGES, rawCode)
+			? rawCode
+			: 'UPSTREAM_UNAVAILABLE';
 	return new AppError({
-		code: readString(error.code) ?? 'UPSTREAM_UNAVAILABLE',
-		message: readString(error.message) ?? 'AI 服务返回了错误',
+		code,
+		message: SAFE_STREAM_ERROR_MESSAGES[code],
 		requestId:
 			readString(error.requestId) ??
 			readString(payload.request_id) ??
@@ -151,7 +168,7 @@ const parseEventBlock = (
 	}
 
 	if (data.trim() === '[DONE]') {
-		return { events: [], done: true };
+		return { events: [], done: true, receivedDone: true };
 	}
 
 	let payload: unknown;
@@ -274,6 +291,7 @@ export class DeepSeekChatProvider implements ChatProvider {
 		let finishReason: string | undefined;
 		let streamFinished = false;
 		let streamFailed = false;
+		let receivedDone = false;
 
 		try {
 			while (!streamFinished) {
@@ -292,6 +310,7 @@ export class DeepSeekChatProvider implements ChatProvider {
 
 					finishReason = parsed.finishReason ?? finishReason;
 					streamFailed = parsed.failed ?? streamFailed;
+					receivedDone = parsed.receivedDone ?? receivedDone;
 					for (const event of parsed.events) yield event;
 					if (parsed.done) {
 						streamFinished = true;
@@ -308,6 +327,7 @@ export class DeepSeekChatProvider implements ChatProvider {
 					const parsed = parseEventBlock(buffer, requestId);
 					finishReason = parsed.finishReason ?? finishReason;
 					streamFailed = parsed.failed ?? streamFailed;
+					receivedDone = parsed.receivedDone ?? receivedDone;
 					for (const event of parsed.events) yield event;
 					streamFinished = parsed.done;
 				}
@@ -335,8 +355,20 @@ export class DeepSeekChatProvider implements ChatProvider {
 			reader.releaseLock();
 		}
 
-		if (!streamFailed) {
-			yield { type: 'done', finishReason };
+		if (streamFailed) return;
+
+		if (!receivedDone) {
+			yield {
+				type: 'error',
+				error: new AppError({
+					code: 'STREAM_PARSE_FAILED',
+					message: SAFE_STREAM_ERROR_MESSAGES.STREAM_PARSE_FAILED,
+					requestId,
+				}),
+			};
+			return;
 		}
+
+		yield { type: 'done', finishReason };
 	}
 }

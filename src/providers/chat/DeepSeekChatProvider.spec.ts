@@ -116,18 +116,48 @@ describe('DeepSeekChatProvider', () => {
 		]);
 	});
 
-	it('emits done when a valid stream closes without the DONE sentinel', async () => {
+	it('reports an empty EOF as STREAM_PARSE_FAILED instead of done', async () => {
+		fetchMock.mockResolvedValue(createStreamResponse([]));
+
+		const events = await collectEvents(
+			new DeepSeekChatProvider().stream(request()),
+		);
+
+		expect(events).toHaveLength(2);
+		expect(events[0]).toEqual({ type: 'start', requestId: undefined });
+		expect(events[1].type).toBe('error');
+		if (events[1].type !== 'error') throw new Error('Expected an error event');
+		expect(events[1].error).toMatchObject({
+			code: 'STREAM_PARSE_FAILED',
+			retryable: false,
+		});
+	});
+
+	it('preserves partial text but reports EOF without the DONE sentinel', async () => {
 		fetchMock.mockResolvedValue(
 			createStreamResponse([
-				encoder.encode('data: {"choices":[{"delta":{"content":"ok"}}]}'),
-			]),
+				encoder.encode('data: {"choices":[{"delta":{"content":"partial"}}]}'),
+			], { 'x-request-id': 'req-eof' }),
 		);
 
 		const events = await collectEvents(
 			new DeepSeekChatProvider().stream(request()),
 		);
 
-		expect(events.at(-1)).toEqual({ type: 'done', finishReason: undefined });
+		expect(events).toHaveLength(3);
+		expect(events[0]).toEqual({ type: 'start', requestId: 'req-eof' });
+		expect(events[1]).toEqual({ type: 'text-delta', text: 'partial' });
+		expect(events[2].type).toBe('error');
+		if (events[2].type !== 'error') throw new Error('Expected an error event');
+		expect(events[2].error).toMatchObject({
+			code: 'STREAM_PARSE_FAILED',
+			requestId: 'req-eof',
+			retryable: false,
+		});
+		expect(events).not.toContainEqual({
+			type: 'done',
+			finishReason: undefined,
+		});
 	});
 
 	it('turns malformed SSE JSON into one STREAM_PARSE_FAILED event', async () => {
@@ -182,7 +212,7 @@ describe('DeepSeekChatProvider', () => {
 		fetchMock.mockResolvedValue(
 			createStreamResponse([
 				encoder.encode(
-					'data: {"error":{"code":"UPSTREAM_UNAVAILABLE","message":"Unavailable","retryable":true},"request_id":"req-event"}\n\n',
+					'data: {"error":{"code":"UNKNOWN_VENDOR_ERROR","message":"secret upstream stack and account details","retryable":true},"request_id":"req-event"}\n\n',
 				),
 			]),
 		);
@@ -196,10 +226,11 @@ describe('DeepSeekChatProvider', () => {
 		if (events[1].type !== 'error') throw new Error('Expected an error event');
 		expect(events[1].error).toMatchObject({
 			code: 'UPSTREAM_UNAVAILABLE',
-			message: 'Unavailable',
+			message: 'AI 服务暂时不可用',
 			requestId: 'req-event',
 			retryable: true,
 		});
+		expect(events[1].error.message).not.toContain('secret');
 	});
 
 	it('maps fetch failures but rethrows AbortError unchanged', async () => {

@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import type { ModelMode } from '../types/provider';
 
 export const SETTINGS_STORAGE_KEY = 'debugdiva:settings:v1';
+export const MAX_SETTINGS_STORAGE_BYTES = 16 * 1024;
 
 interface PersistedSettings {
 	version: 1;
@@ -49,20 +50,27 @@ export const useSettingsStore = defineStore('settings', () => {
 
 	const loadSettings = (storage: Storage = localStorage) => {
 		if (initialized.value) return;
+		let canPersist = true;
 
 		try {
 			const raw = storage.getItem(SETTINGS_STORAGE_KEY);
 			if (raw) {
-				const saved = JSON.parse(raw) as Partial<PersistedSettings>;
-				if (isModelMode(saved.modelMode)) modelMode.value = saved.modelMode;
-				if (isValidClientId(saved.clientId)) clientId.value = saved.clientId;
+				if (new TextEncoder().encode(raw).byteLength > MAX_SETTINGS_STORAGE_BYTES) {
+					canPersist = false;
+					console.warn('Stored settings exceed the safe read limit');
+				} else {
+					const saved = JSON.parse(raw) as Partial<PersistedSettings>;
+					if (isModelMode(saved.modelMode)) modelMode.value = saved.modelMode;
+					if (isValidClientId(saved.clientId)) clientId.value = saved.clientId;
+				}
 			}
 		} catch (error) {
+			canPersist = false;
 			console.warn('Failed to load settings, using defaults:', error);
 		}
 
 		initialized.value = true;
-		persist(storage);
+		if (canPersist) persist(storage);
 	};
 
 	const setModelMode = (

@@ -3,12 +3,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
+import { AppError } from '../services/errors/AppError';
 import type { ChatEvent } from '../types/provider';
 import { getMessageText } from '../services/context/buildChatContext';
 import { IMAGE_GENERATION_UNAVAILABLE_MESSAGE } from '../services/context/detectImageGenerationIntent';
 import { saveAttachmentResults } from '../services/storage/attachmentStorage';
 import {
 	CHAT_SESSIONS_STORAGE_KEY,
+	MAX_CHAT_STORAGE_RAW_BYTES,
 	saveChatSessions,
 } from '../services/storage/chatStorage';
 import {
@@ -175,7 +177,7 @@ describe('chat store provider orchestration', () => {
 			.spyOn(DeepSeekChatProvider.prototype, 'stream')
 			.mockImplementation(() =>
 				createStream([
-					{ type: 'start' },
+					{ type: 'start', requestId: 'req-store' },
 					{ type: 'reasoning-delta', text: '先分析问题。' },
 					{ type: 'text-delta', text: '最终答案' },
 					{
@@ -206,6 +208,7 @@ describe('chat store provider orchestration', () => {
 			completionTokens: 4,
 			totalTokens: 16,
 		});
+		expect(answer.requestId).toBe('req-store');
 	});
 
 	it('stores a normalized provider error instead of parsing supplier payloads', async () => {
@@ -228,6 +231,102 @@ describe('chat store provider orchestration', () => {
 		expect(answer.status).toBe('error');
 		expect(answer.errorCode).toBe('RATE_LIMITED');
 		expect(getMessageText(answer)).toBe('请求过于频繁，请稍后重试');
+	});
+
+	it('retries one empty 5xx stream once and then succeeds', async () => {
+		const streamSpy = vi
+			.spyOn(DeepSeekChatProvider.prototype, 'stream')
+			.mockImplementationOnce(() =>
+				createStream([
+					{
+						type: 'error',
+						error: new AppError({
+							code: 'UPSTREAM_UNAVAILABLE',
+							message: 'AI 服务暂时不可用',
+							status: 503,
+							retryable: true,
+						}),
+					},
+				]),
+			)
+			.mockImplementationOnce(() =>
+				createStream([
+					{ type: 'text-delta', text: '重试成功' },
+					{ type: 'done', finishReason: 'stop' },
+				]),
+			);
+		const store = useChatStore();
+
+		await store.handleChat({ input: '自动重试' });
+
+		expect(streamSpy).toHaveBeenCalledTimes(2);
+		expect(store.chatHistory.at(-1)?.status).toBe('completed');
+		expect(getMessageText(store.chatHistory.at(-1)!)).toBe('重试成功');
+	});
+
+	it('does not auto-retry a 5xx after any streamed output', async () => {
+		const streamSpy = vi
+			.spyOn(DeepSeekChatProvider.prototype, 'stream')
+			.mockImplementation(() =>
+				createStream([
+					{ type: 'text-delta', text: '部分内容' },
+					{
+						type: 'error',
+						error: new AppError({
+							code: 'UPSTREAM_UNAVAILABLE',
+							message: 'AI 服务暂时不可用',
+							status: 503,
+							retryable: true,
+						}),
+					},
+				]),
+			);
+		const store = useChatStore();
+
+		await store.handleChat({ input: '不要重复输出' });
+
+		expect(streamSpy).toHaveBeenCalledTimes(1);
+		expect(store.chatHistory.at(-1)?.status).toBe('error');
+	});
+
+	it('never retries authentication failures or more than one 5xx attempt', async () => {
+		const authSpy = vi
+			.spyOn(DeepSeekChatProvider.prototype, 'stream')
+			.mockImplementation(() =>
+				createStream([
+					{
+						type: 'error',
+						error: new AppError({
+							code: 'AUTH_FAILED',
+							message: 'AI 服务鉴权失败',
+							status: 401,
+							retryable: false,
+						}),
+					},
+				]),
+			);
+		const firstStore = useChatStore();
+		await firstStore.handleChat({ input: '鉴权失败' });
+		expect(authSpy).toHaveBeenCalledTimes(1);
+
+		vi.restoreAllMocks();
+		setActivePinia(createPinia());
+		const unavailable = new AppError({
+			code: 'UPSTREAM_UNAVAILABLE',
+			message: 'AI 服务暂时不可用',
+			status: 503,
+			retryable: true,
+		});
+		const retrySpy = vi
+			.spyOn(DeepSeekChatProvider.prototype, 'stream')
+			.mockImplementation(() =>
+				createStream([{ type: 'error', error: unavailable }]),
+			);
+		const secondStore = useChatStore();
+		await secondStore.handleChat({ input: '服务故障' });
+
+		expect(retrySpy).toHaveBeenCalledTimes(2);
+		expect(secondStore.chatHistory.at(-1)?.status).toBe('error');
 	});
 
 	it('adds ready document metadata to the message and injects parsed text into provider context', async () => {
@@ -626,6 +725,96 @@ describe('chat store provider orchestration', () => {
 
 		expect(store.chatSessions).toHaveLength(1);
 		expect(store.chatSessions[0].messages).toHaveLength(2);
+		expect(localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(
+			'{broken',
+		);
+	});
+
+	it.each(['corrupted', 'oversized'] as const)(
+		'preserves independent summaries when chat storage is %s',
+		failureKind => {
+			saveConversationSummaries(localStorage, {
+				'preserved-session': conversationSummary('message-9'),
+			});
+			const originalSummaryRaw = localStorage.getItem(
+				CONVERSATION_SUMMARIES_STORAGE_KEY,
+			);
+			localStorage.setItem(
+				CHAT_SESSIONS_STORAGE_KEY,
+				failureKind === 'corrupted'
+					? '{broken'
+					: 'x'.repeat(MAX_CHAT_STORAGE_RAW_BYTES + 1),
+			);
+			const store = useChatStore();
+
+			store.loadDataFromLocalStorage();
+
+			expect(store.canPruneAttachmentResults).toBe(false);
+			expect(
+				localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY),
+			).toBe(originalSummaryRaw);
+			expect(localStorage.getItem(CHAT_SESSIONS_STORAGE_KEY)).toBe(
+				failureKind === 'corrupted'
+					? '{broken'
+					: 'x'.repeat(MAX_CHAT_STORAGE_RAW_BYTES + 1),
+			);
+		},
+	);
+
+	it('does not overwrite preserved summaries after a new background summary completes', async () => {
+		saveConversationSummaries(localStorage, {
+			'preserved-session': conversationSummary('message-9'),
+		});
+		const originalSummaryRaw = localStorage.getItem(
+			CONVERSATION_SUMMARIES_STORAGE_KEY,
+		);
+		localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, '{broken');
+		mockSuccessfulProvider();
+		const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+			const body = JSON.parse(String(init?.body));
+			return Response.json({
+				data: conversationSummary(body.messages.at(-1).id),
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.chatSessions = [storedSession(historyMessages(20))];
+		store.switchSession('long-session');
+
+		await store.handleChat({ input: '继续当前内存中的会话' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+		await vi.waitFor(() =>
+			expect(store.chatSessions[0].summary).toBeDefined(),
+		);
+
+		expect(localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(
+			originalSummaryRaw,
+		);
+		expect(localStorage.getItem(CHAT_SESSIONS_STORAGE_KEY)).toBe('{broken');
+	});
+
+	it('does not overwrite unreadable summary storage after background summarization', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(20))]);
+		localStorage.setItem(CONVERSATION_SUMMARIES_STORAGE_KEY, '{broken');
+		mockSuccessfulProvider();
+		const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+			const body = JSON.parse(String(init?.body));
+			return Response.json({
+				data: conversationSummary(body.messages.at(-1).id),
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleChat({ input: '继续聊天但保留损坏的摘要原文' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+		await vi.waitFor(() =>
+			expect(store.chatSessions[0].summary).toBeDefined(),
+		);
+
 		expect(localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(
 			'{broken',
 		);

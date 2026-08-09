@@ -53,11 +53,13 @@ describe('POST /api/summarize', () => {
 		fetchMock.mockReset();
 		fetchMock.mockResolvedValue(upstreamSuccess());
 		vi.stubGlobal('fetch', fetchMock);
+		vi.spyOn(console, 'info').mockImplementation(() => undefined);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 	});
 
 	it('uses fixed non-streaming JSON Output settings and server-owned metadata', async () => {
@@ -153,8 +155,11 @@ describe('POST /api/summarize', () => {
 
 	it.each([
 		[401, 'AUTH_FAILED', 502],
+		[403, 'AUTH_FAILED', 502],
 		[402, 'INSUFFICIENT_BALANCE', 402],
 		[429, 'RATE_LIMITED', 429],
+		[408, 'REQUEST_TIMEOUT', 504],
+		[504, 'REQUEST_TIMEOUT', 504],
 		[503, 'UPSTREAM_UNAVAILABLE', 502],
 	] as const)('maps upstream status %s to %s without exposing its body', async (status, code, expectedStatus) => {
 		fetchMock.mockResolvedValueOnce(
@@ -170,6 +175,13 @@ describe('POST /api/summarize', () => {
 		expect(body).toContain(code);
 		expect(body).not.toContain('SECRET_UPSTREAM_BODY_AND_KEY');
 		expect(body).not.toContain(env.DEEPSEEK_API_KEY);
+		expect(JSON.parse(body).error).toMatchObject({
+			requestId: expect.any(String),
+			retryable:
+				code === 'RATE_LIMITED' ||
+				code === 'REQUEST_TIMEOUT' ||
+				code === 'UPSTREAM_UNAVAILABLE',
+		});
 	});
 
 	it('returns INVALID_SUMMARY_RESPONSE and never falls back to previousSummary', async () => {
@@ -266,5 +278,46 @@ describe('POST /api/summarize', () => {
 		expect(body).toContain('UPSTREAM_UNAVAILABLE');
 		expect(body).not.toContain('SECRET_NETWORK_STACK');
 		expect(body).not.toContain(env.DEEPSEEK_API_KEY);
+	});
+
+	it('logs only allowlisted lifecycle metadata and sanitized usage', async () => {
+		fetchMock.mockResolvedValueOnce(
+			Response.json({
+				choices: [{ message: { content: JSON.stringify(summaryArrays) } }],
+				usage: {
+					prompt_tokens: 11,
+					completion_tokens: 4,
+					total_tokens: 15,
+				},
+				secret: 'SECRET_PROVIDER_METADATA',
+			}),
+		);
+		const response = await onRequestPost({
+			request: createRequest({
+				messages: [{ ...messages[0], content: 'SECRET_SUMMARY_PROMPT' }],
+			}),
+			env,
+		});
+		expect(response.status).toBe(200);
+
+		const info = vi.mocked(console.info);
+		expect(info).toHaveBeenCalledOnce();
+		const rawLog = String(info.mock.calls[0][0]);
+		expect(rawLog).not.toContain('SECRET_SUMMARY_PROMPT');
+		expect(rawLog).not.toContain('SECRET_PROVIDER_METADATA');
+		expect(rawLog).not.toContain(env.DEEPSEEK_API_KEY);
+		const entry = JSON.parse(rawLog);
+		expect(Object.keys(entry).sort()).toEqual([
+			'duration',
+			'mode',
+			'requestId',
+			'status',
+			'usage',
+		]);
+		expect(entry).toMatchObject({
+			status: 200,
+			mode: 'summary',
+			usage: { promptTokens: 11, completionTokens: 4, totalTokens: 15 },
+		});
 	});
 });
