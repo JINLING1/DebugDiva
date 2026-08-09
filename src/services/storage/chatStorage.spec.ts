@@ -270,4 +270,63 @@ describe('chat storage migration', () => {
 			alt: '报错截图',
 		});
 	});
+
+	it('stores summaries only in the dedicated summary storage key', () => {
+		const storage = new MemoryStorage();
+		saveChatSessions(storage, [
+			{
+				id: 'session-with-summary',
+				title: '长对话',
+				createdAt: 1,
+				updatedAt: 2,
+				activeAttachmentIds: [],
+				messages: [],
+				summary: {
+					userGoals: ['排查问题'],
+					confirmedFacts: [],
+					decisions: [],
+					unresolvedQuestions: [],
+					coveredUntilMessageId: 'message-9',
+					updatedAt: 2,
+				},
+			},
+		]);
+
+		const stored = JSON.parse(
+			storage.getItem(CHAT_SESSIONS_STORAGE_KEY) || '[]',
+		);
+		expect(stored[0]).not.toHaveProperty('summary');
+	});
+
+	it('keeps only valid embedded summaries for one-time migration', () => {
+		const baseSession = {
+			id: 'legacy-embedded-summary',
+			title: '长对话',
+			createdAt: 1,
+			updatedAt: 2,
+			activeAttachmentIds: [],
+			messages: [],
+		};
+		const validSummary = {
+			userGoals: ['排查问题'],
+			confirmedFacts: [],
+			decisions: [],
+			unresolvedQuestions: [],
+			coveredUntilMessageId: 'message-9',
+			updatedAt: 2,
+		};
+
+		expect(
+			normalizeV2Sessions([{ ...baseSession, summary: validSummary }])[0]
+				.summary,
+		).toEqual(validSummary);
+		expect(
+			normalizeV2Sessions([
+				{
+					...baseSession,
+					summary: { ...validSummary, decisions: 'not-an-array' },
+				},
+			])[0].summary,
+		).toBeUndefined();
+	});
 });

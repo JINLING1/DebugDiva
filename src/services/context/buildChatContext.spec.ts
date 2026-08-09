@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage, MessageStatus } from '../../types/chat';
+import type {
+	ChatMessage,
+	ConversationSummary,
+	MessageStatus,
+} from '../../types/chat';
 import type {
 	DocumentAttachment,
 	ImageAttachment,
@@ -62,6 +66,17 @@ const imageAttachment = (
 	createdAt: 1,
 	updatedAt: 1,
 	...overrides,
+});
+
+const summary = (
+	coveredUntilMessageId: string,
+): ConversationSummary => ({
+	userGoals: ['修复生产环境报错'],
+	confirmedFacts: ['仅在 Safari 复现'],
+	decisions: ['先补充最小复现'],
+	unresolvedQuestions: ['是否与缓存有关'],
+	coveredUntilMessageId,
+	updatedAt: 10,
 });
 
 describe('buildChatContext', () => {
@@ -262,6 +277,74 @@ describe('buildChatContext', () => {
 			providerMessage.content.indexOf('[附件开始]'),
 		);
 		expect(providerMessage.content).not.toContain('pending.png');
+	});
+
+	it('prepends a valid summary and keeps every message after its boundary', () => {
+		const messages = [
+			message('u1', 'user', 'completed', ['旧问题']),
+			message('a1', 'assistant', 'completed', ['旧回答']),
+			message('u2', 'user', 'completed', ['尚未摘要的问题']),
+			message('a2', 'assistant', 'completed', ['尚未摘要的回答']),
+			message('u3', 'user', 'completed', ['最新问题']),
+		];
+
+		const context = buildChatContext(messages, undefined, {
+			summary: summary('a1'),
+		});
+
+		expect(context[0]).toEqual({
+			role: 'user',
+			content: expect.stringContaining('[历史会话摘要开始]'),
+		});
+		expect(context[0].content).toContain('修复生产环境报错');
+		expect(context.slice(1)).toEqual([
+			{ role: 'user', content: '尚未摘要的问题' },
+			{ role: 'assistant', content: '尚未摘要的回答' },
+			{ role: 'user', content: '最新问题' },
+		]);
+	});
+
+	it('falls back to the full history when the summary boundary is stale', () => {
+		const messages = [
+			message('u1', 'user', 'completed', ['第一问']),
+			message('a1', 'assistant', 'completed', ['第一答']),
+		];
+
+		expect(
+			buildChatContext(messages, undefined, {
+				summary: summary('missing'),
+			}),
+		).toEqual([
+			{ role: 'user', content: '第一问' },
+			{ role: 'assistant', content: '第一答' },
+		]);
+	});
+
+	it('orders summary, stable attachment data and raw messages without bytes', () => {
+		const messages = [
+			message('u1', 'user', 'completed', ['旧问题']),
+			message('a1', 'assistant', 'completed', ['旧回答']),
+			message('u2', 'user', 'completed', ['请继续分析截图']),
+		];
+		const image = imageAttachment('screen', {
+			previewUrl: 'blob:https://example.test/private',
+		});
+
+		const context = buildChatContext(messages, undefined, {
+			summary: summary('a1'),
+			activeAttachmentIds: ['screen'],
+			attachmentResults: [image],
+		});
+
+		expect(context).toHaveLength(3);
+		expect(context[0].content).toContain('[历史会话摘要开始]');
+		expect(context[1].content).toContain('[当前激活附件上下文开始]');
+		expect(context[1].content).toContain('[图片分析结果]');
+		expect(context[2]).toEqual({
+			role: 'user',
+			content: '请继续分析截图',
+		});
+		expect(context.map(item => item.content).join('\n')).not.toContain('blob:');
 	});
 
 	it('maps DeepSeek token usage into the domain model', () => {

@@ -1,4 +1,9 @@
-import type { ChatMessage, MessageContent, TokenUsage } from '../../types/chat';
+import type {
+	ChatMessage,
+	ConversationSummary,
+	MessageContent,
+	TokenUsage,
+} from '../../types/chat';
 import type { ChatAttachment } from '../../types/attachment';
 import type { ProviderMessage } from '../../types/provider';
 
@@ -40,6 +45,7 @@ export const isContextMessage = (message: ChatMessage): boolean => {
 export interface BuildChatContextOptions {
 	activeAttachmentIds?: readonly string[];
 	attachmentResults?: readonly ChatAttachment[];
+	summary?: ConversationSummary;
 }
 
 const sanitizeAttachmentMetadata = (value: string): string =>
@@ -80,6 +86,25 @@ const formatAttachmentBlock = (attachment: ChatAttachment): string => {
 	].join('\n');
 };
 
+const formatSummaryList = (items: readonly string[]): string[] =>
+	items.length ? items.map(item => `- ${item}`) : ['- 无'];
+
+export const formatConversationSummary = (
+	summary: ConversationSummary,
+): string =>
+	[
+		'[历史会话摘要开始]',
+		'用户目标：',
+		...formatSummaryList(summary.userGoals),
+		'已确认事实：',
+		...formatSummaryList(summary.confirmedFacts),
+		'已做决定：',
+		...formatSummaryList(summary.decisions),
+		'未解决问题：',
+		...formatSummaryList(summary.unresolvedQuestions),
+		'[历史会话摘要结束]',
+	].join('\n');
+
 export const buildChatContext = (
 	messages: ChatMessage[],
 	endExclusive = messages.length,
@@ -96,14 +121,53 @@ export const buildChatContext = (
 	const context: ProviderMessage[] = [];
 	let lastUserIndex = -1;
 	let lastUserHasAttachmentBlock = false;
+	const eligibleMessages = messages
+		.slice(0, endExclusive)
+		.filter(isContextMessage);
+	const summaryBoundary = options.summary
+		? eligibleMessages.findIndex(
+				message => message.id === options.summary?.coveredUntilMessageId,
+			)
+		: -1;
+	const activeSummary =
+		summaryBoundary >= 0 ? options.summary : undefined;
+	const rawMessages = activeSummary
+		? eligibleMessages.slice(summaryBoundary + 1)
+		: eligibleMessages;
 
-	for (const message of messages.slice(0, endExclusive)) {
-		if (!isContextMessage(message)) continue;
+	if (activeSummary) {
+		context.push({
+			role: 'user',
+			content: formatConversationSummary(activeSummary),
+		});
 
+		const stableAttachmentBlocks = activeIds
+			.map(id => readyAttachments.get(id))
+			.filter(
+				(attachment): attachment is ChatAttachment =>
+					attachment !== undefined,
+			)
+			.map(attachment => {
+				injectedIds.add(attachment.id);
+				return formatAttachmentBlock(attachment);
+			});
+		if (stableAttachmentBlocks.length) {
+			context.push({
+				role: 'user',
+				content: [
+					'[当前激活附件上下文开始]',
+					...stableAttachmentBlocks,
+					'[当前激活附件上下文结束]',
+				].join('\n\n'),
+			});
+		}
+	}
+
+	for (const message of rawMessages) {
 		const messageText = getMessageText(message).trim();
 		let content = messageText;
 
-		if (message.role === 'user') {
+		if (message.role === 'user' && !activeSummary) {
 			const blocks: string[] = [];
 			for (const item of message.contents) {
 				const attachmentId =
@@ -127,8 +191,10 @@ export const buildChatContext = (
 			if (blocks.length) {
 				content = `${blocks.join('\n\n')}\n\n用户问题：${messageText}`;
 			}
+		}
+		if (message.role === 'user') {
 			lastUserIndex = context.length;
-			lastUserHasAttachmentBlock = blocks.length > 0;
+			lastUserHasAttachmentBlock = content !== messageText;
 		}
 
 		context.push({ role: message.role, content });

@@ -1,11 +1,16 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
+import {
+	planConversationMemory,
+	useConversationMemory,
+} from '../composables/useConversationMemory';
 import type {
 	ChatMessage,
 	ChatParams,
 	ChatRole,
 	ChatSession,
+	ConversationSummary,
 	MessageStatus,
 } from '../types/chat';
 import {
@@ -31,6 +36,12 @@ import {
 	saveChatSessions,
 } from '../services/storage/chatStorage';
 import { loadAttachmentResults } from '../services/storage/attachmentStorage';
+import {
+	loadConversationSummaries,
+	normalizeConversationSummary,
+	saveConversationSummaries,
+	type ConversationSummaryMap,
+} from '../services/storage/summaryStorage';
 import { useSettingsStore } from './settings';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -89,6 +100,7 @@ const normalizeAttachmentIds = (ids: readonly string[]): string[] =>
 
 export const useChatStore = defineStore('chat', () => {
 	const settingsStore = useSettingsStore();
+	const conversationMemory = useConversationMemory();
 	const chatSessions = ref<ChatSession[]>([]);
 	const currentSessionId = ref<string | null>(null);
 	const chatHistory = ref<ChatMessage[]>([]);
@@ -108,6 +120,84 @@ export const useChatStore = defineStore('chat', () => {
 			console.error('Failed to persist chat sessions:', error);
 			ElMessage.error('本地存储空间不足，会话暂时无法保存。');
 			return false;
+		}
+	};
+
+	const collectConversationSummaries = (): ConversationSummaryMap =>
+		Object.fromEntries(
+			chatSessions.value.flatMap(session =>
+				session.summary ? [[session.id, session.summary] as const] : [],
+			),
+		);
+
+	const persistConversationSummaries = () => {
+		const result = saveConversationSummaries(
+			localStorage,
+			collectConversationSummaries(),
+		);
+		if (!result.ok) {
+			console.error('Failed to persist conversation summaries:', result.errorCode);
+			ElMessage.error('本地存储空间不足，会话摘要暂时无法保存。');
+		}
+		return result.ok;
+	};
+
+	const setConversationSummary = (
+		sessionId: string,
+		summary: ConversationSummary | undefined,
+	) => {
+		const session = chatSessions.value.find(item => item.id === sessionId);
+		if (!session) return false;
+		session.summary = summary ? clone(summary) : undefined;
+		persistConversationSummaries();
+		return true;
+	};
+
+	const getCurrentConversationSummary = (
+		endExclusive = chatHistory.value.length,
+	): ConversationSummary | undefined => {
+		const session = chatSessions.value.find(
+			item => item.id === currentSessionId.value,
+		);
+		const summary = session?.summary;
+		if (!summary) return undefined;
+		return planConversationMemory(
+			chatHistory.value.slice(0, endExclusive),
+			summary,
+		).usableSummary;
+	};
+
+	const scheduleConversationSummary = () => {
+		const sessionId = currentSessionId.value;
+		if (!sessionId) return;
+		const session = chatSessions.value.find(item => item.id === sessionId);
+		if (!session) return;
+
+		void conversationMemory.trigger({
+			sessionId,
+			messages: session.messages,
+			summary: session.summary,
+			clientId: settingsStore.clientId,
+			onCommit: summary => {
+				setConversationSummary(sessionId, summary);
+			},
+		});
+	};
+
+	const invalidateSummaryForRegeneration = (regeneratedUserIndex: number) => {
+		const sessionId = currentSessionId.value;
+		if (!sessionId) return;
+		const session = chatSessions.value.find(item => item.id === sessionId);
+		if (!session?.summary) return;
+		const coveredIndex = chatHistory.value.findIndex(
+			message => message.id === session.summary?.coveredUntilMessageId,
+		);
+		// The prompt being regenerated must remain in the raw context. If the
+		// summary already covers that user turn, cropping after the summary
+		// boundary would otherwise leave the provider with no question to answer.
+		if (coveredIndex < 0 || coveredIndex >= regeneratedUserIndex) {
+			conversationMemory.cancel(sessionId);
+			setConversationSummary(sessionId, undefined);
 		}
 	};
 
@@ -155,12 +245,49 @@ export const useChatStore = defineStore('chat', () => {
 		chatSessions.value = result.sessions.sort(
 			(a, b) => b.updatedAt - a.updatedAt,
 		);
+		const summaryResult = loadConversationSummaries(localStorage);
+		const hadEmbeddedSummaries = chatSessions.value.some(session =>
+			Boolean(normalizeConversationSummary(session.summary)),
+		);
+		const canRewriteSummaryStorage = ![
+			'SUMMARY_STORAGE_READ_FAILED',
+			'SUMMARY_STORAGE_CORRUPTED',
+		].includes(summaryResult.errorCode ?? '');
+		const mergedSummaries: ConversationSummaryMap = {};
+		for (const session of chatSessions.value) {
+			const externalSummary = normalizeConversationSummary(
+				summaryResult.summaries[session.id],
+			);
+			const embeddedSummary = normalizeConversationSummary(session.summary);
+			const summary =
+				externalSummary && embeddedSummary
+					? externalSummary.updatedAt >= embeddedSummary.updatedAt
+						? externalSummary
+						: embeddedSummary
+					: externalSummary ?? embeddedSummary ?? undefined;
+			session.summary = summary ? clone(summary) : undefined;
+			if (summary) mergedSummaries[session.id] = summary;
+		}
+		if (canRewriteSummaryStorage) {
+			const saveResult = saveConversationSummaries(
+				localStorage,
+				mergedSummaries,
+			);
+			if (!saveResult.ok) {
+				ElMessage.error('会话摘要迁移失败，当前聊天仍可正常使用。');
+			} else if (hadEmbeddedSummaries) {
+				persistSessionList();
+			}
+		}
 		initialized.value = true;
 
 		if (result.recoveredFromError) {
 			ElMessage.warning(
 				'部分本地会话无法读取，原始数据已保留，请查看迁移备份。',
 			);
+		}
+		if (summaryResult.recoveredFromError) {
+			ElMessage.warning('部分本地会话摘要无法读取，聊天历史仍可正常使用。');
 		}
 
 		currentSessionId.value = null;
@@ -289,9 +416,11 @@ export const useChatStore = defineStore('chat', () => {
 		);
 
 	const deleteSession = (id: string) => {
+		conversationMemory.cancel(id);
 		chatSessions.value = chatSessions.value.filter(item => item.id !== id);
 		if (currentSessionId.value === id) startNewChat();
 		persistSessionList();
+		persistConversationSummaries();
 	};
 
 	const updateSessionTitle = (id: string, newTitle: string) => {
@@ -357,6 +486,7 @@ export const useChatStore = defineStore('chat', () => {
 		const contextOptions = {
 			activeAttachmentIds: requestAttachmentIds,
 			attachmentResults: attachmentContext.all,
+			summary: getCurrentConversationSummary(updateIndex),
 		};
 
 		if (detectImageGenerationIntent(normalizedInput)) {
@@ -385,6 +515,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 
 			saveSessionsToLocalStorage();
+			scheduleConversationSummary();
 			return;
 		}
 
@@ -501,6 +632,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (assistantMessageIndex === targetIndex) assistantMessageIndex = -1;
 			if (abortController.value === controller) abortController.value = null;
 			isAssistantTyping.value = false;
+			scheduleConversationSummary();
 		}
 	};
 
@@ -535,6 +667,10 @@ export const useChatStore = defineStore('chat', () => {
 			ElMessage.warning('没有找到对应的用户消息。');
 			return;
 		}
+
+		invalidateSummaryForRegeneration(
+			chatHistory.value.lastIndexOf(previousUserMessage),
+		);
 
 		await handleChat({
 			userInput: getMessageText(previousUserMessage),

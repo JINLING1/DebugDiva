@@ -6,15 +6,33 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
 import { resolveModelMode } from './functions/_shared/modelMode.ts';
 import { onRequestPost as parseFileRequest } from './functions/api/files/parse.ts';
 import { onRequestPost as analyzeVisionRequest } from './functions/api/vision/analyze.ts';
+import { MAX_SUMMARY_REQUEST_BYTES } from './functions/_shared/conversationSummary.ts';
+import { onRequestPost as summarizeRequest } from './functions/api/summarize.ts';
 
 const MAX_MULTIPART_REQUEST_SIZE = 11 * 1024 * 1024;
 
-const readRequestBody = request =>
+const readRequestBody = (request, maxBytes = 512 * 1024) =>
 	new Promise((resolve, reject) => {
 		let body = '';
+		let totalBytes = 0;
+		let rejected = false;
 		request.setEncoding('utf8');
-		request.on('data', chunk => (body += chunk));
-		request.on('end', () => resolve(body));
+		request.on('data', chunk => {
+			if (rejected) return;
+			totalBytes += Buffer.byteLength(chunk);
+			if (totalBytes > maxBytes) {
+				rejected = true;
+				body = '';
+				const error = new Error('请求体过大');
+				error.code = 'REQUEST_TOO_LARGE';
+				reject(error);
+				return;
+			}
+			body += chunk;
+		});
+		request.on('end', () => {
+			if (!rejected) resolve(body);
+		});
 		request.on('error', reject);
 	});
 
@@ -303,6 +321,77 @@ const visionAnalyzeDevProxy = env => ({
 	},
 });
 
+const summarizeDevProxy = env => ({
+	name: 'summarize-dev-proxy',
+	configureServer(server) {
+		server.middlewares.use('/api/summarize', async (request, response) => {
+			if (request.method !== 'POST') {
+				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed');
+				return;
+			}
+			const contentLength = Number(request.headers['content-length']);
+			if (
+				Number.isFinite(contentLength) &&
+				contentLength > MAX_SUMMARY_REQUEST_BYTES
+			) {
+				sendJsonError(
+					response,
+					413,
+					'REQUEST_TOO_LARGE',
+					'摘要请求体不能超过 128KB',
+				);
+				return;
+			}
+
+			const controller = new AbortController();
+			response.on('close', () => {
+				if (!response.writableEnded) controller.abort();
+			});
+			try {
+				const body = await readRequestBody(
+					request,
+					MAX_SUMMARY_REQUEST_BYTES,
+				);
+				const headers = new Headers();
+				for (const name of ['content-type', 'content-length']) {
+					const value = request.headers[name];
+					if (typeof value === 'string') headers.set(name, value);
+				}
+				const webRequest = new Request('http://localhost/api/summarize', {
+					method: 'POST',
+					headers,
+					body,
+					signal: controller.signal,
+				});
+				const result = await summarizeRequest({
+					request: webRequest,
+					env: {
+						DEEPSEEK_API_KEY:
+							env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY,
+						DEEPSEEK_BASE_URL:
+							env.DEEPSEEK_BASE_URL || env.VITE_DEEPSEEK_BASE_URL,
+					},
+				});
+				if (response.destroyed) return;
+				response.statusCode = result.status;
+				result.headers.forEach((value, name) => response.setHeader(name, value));
+				response.end(Buffer.from(await result.arrayBuffer()));
+			} catch (error) {
+				if (response.writableEnded || response.destroyed) return;
+				const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
+				sendJsonError(
+					response,
+					tooLarge ? 413 : 500,
+					tooLarge ? 'REQUEST_TOO_LARGE' : 'UPSTREAM_UNAVAILABLE',
+					tooLarge
+						? '摘要请求体不能超过 128KB'
+						: '摘要服务暂时不可用',
+				);
+			}
+		});
+	},
+});
+
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
 
@@ -312,6 +401,7 @@ export default defineConfig(({ mode }) => {
 			vue(),
 			fileParseDevProxy(),
 			visionAnalyzeDevProxy(env),
+			summarizeDevProxy(env),
 			deepSeekDevProxy(env),
 			AutoImport({ resolvers: [ElementPlusResolver()] }),
 			Components({ resolvers: [ElementPlusResolver()] }),

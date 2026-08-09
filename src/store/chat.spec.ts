@@ -1,12 +1,26 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
 import type { ChatEvent } from '../types/provider';
 import { getMessageText } from '../services/context/buildChatContext';
 import { IMAGE_GENERATION_UNAVAILABLE_MESSAGE } from '../services/context/detectImageGenerationIntent';
 import { saveAttachmentResults } from '../services/storage/attachmentStorage';
+import {
+	CHAT_SESSIONS_STORAGE_KEY,
+	saveChatSessions,
+} from '../services/storage/chatStorage';
+import {
+	CONVERSATION_SUMMARIES_STORAGE_KEY,
+	loadConversationSummaries,
+	saveConversationSummaries,
+} from '../services/storage/summaryStorage';
+import type {
+	ChatMessage,
+	ChatSession,
+	ConversationSummary,
+} from '../types/chat';
 import type {
 	DocumentAttachment,
 	ImageAttachment,
@@ -67,11 +81,44 @@ const mockSuccessfulProvider = () =>
 		]),
 	);
 
+const historyMessages = (count: number): ChatMessage[] =>
+	Array.from({ length: count }, (_, index) => ({
+		id: `m-${index + 1}`,
+		role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+		status: 'completed' as const,
+		contents: [{ type: 'text' as const, text: `content-m-${index + 1}` }],
+		createdAt: index + 1,
+	}));
+
+const storedSession = (messages: ChatMessage[]): ChatSession => ({
+	id: 'long-session',
+	title: '长对话',
+	createdAt: 1,
+	updatedAt: 2,
+	messages,
+	activeAttachmentIds: [],
+});
+
+const conversationSummary = (
+	coveredUntilMessageId: string,
+): ConversationSummary => ({
+	userGoals: ['完成长对话摘要'],
+	confirmedFacts: ['项目使用 Vue 3'],
+	decisions: ['保留最近十二条消息'],
+	unresolvedQuestions: [],
+	coveredUntilMessageId,
+	updatedAt: 100,
+});
+
 describe('chat store provider orchestration', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		setActivePinia(createPinia());
 		vi.restoreAllMocks();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
 	it('answers explicit image generation requests locally without a provider call', async () => {
@@ -400,5 +447,203 @@ describe('chat store provider orchestration', () => {
 		expect(serializedContext).toContain('FIRST_ATTACHMENT_BODY');
 		expect(serializedContext).not.toContain('SECOND_ATTACHMENT_BODY');
 		expect(store.activeAttachmentIds).toEqual(['second']);
+	});
+
+	it('restores an independent summary and sends only messages after its boundary', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(21))]);
+		saveConversationSummaries(localStorage, {
+			'long-session': conversationSummary('m-9'),
+		});
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleChat({ input: '最新问题' });
+
+		const providerMessages = streamSpy.mock.calls[0][0].messages;
+		expect(providerMessages[1].content).toContain('[历史会话摘要开始]');
+		expect(providerMessages[1].content).toContain('完成长对话摘要');
+		const serialized = providerMessages.map(item => item.content).join('\n');
+		expect(providerMessages).not.toContainEqual({
+			role: 'user',
+			content: 'content-m-1',
+		});
+		expect(providerMessages).not.toContainEqual({
+			role: 'user',
+			content: 'content-m-9',
+		});
+		expect(serialized).toContain('content-m-10');
+		expect(providerMessages.at(-1)).toEqual({
+			role: 'user',
+			content: '最新问题',
+		});
+	});
+
+	it('generates and persists a background summary without blocking chat', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(20))]);
+		mockSuccessfulProvider();
+		const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+			const body = JSON.parse(String(init?.body));
+			const coveredUntilMessageId = body.messages.at(-1).id;
+			return Response.json({
+				data: {
+					...conversationSummary(coveredUntilMessageId),
+					updatedAt: 1_000,
+				},
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleChat({ input: '触发摘要' });
+
+		expect(getMessageText(store.chatHistory.at(-1)!)).toBe('附件分析完成');
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+		await vi.waitFor(() =>
+			expect(store.chatSessions[0].summary?.coveredUntilMessageId).toBe('m-10'),
+		);
+		const summaryRequest = JSON.parse(
+			String(fetchMock.mock.calls[0][1]?.body),
+		);
+		expect(summaryRequest.messages).toHaveLength(10);
+		expect(summaryRequest.messages[0]).toEqual({
+			id: 'm-1',
+			role: 'user',
+			content: 'content-m-1',
+		});
+		expect(String(fetchMock.mock.calls[0][1]?.body)).not.toMatch(
+			/attachment|blob:|base64/i,
+		);
+		expect(
+			loadConversationSummaries(localStorage).summaries['long-session']
+				.coveredUntilMessageId,
+		).toBe('m-10');
+		expect(localStorage.getItem(CHAT_SESSIONS_STORAGE_KEY)).not.toContain(
+			'"summary"',
+		);
+	});
+
+	it('keeps chat successful when background summarization fails', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(20))]);
+		mockSuccessfulProvider();
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockRejectedValue(new TypeError('summary offline'));
+		vi.stubGlobal('fetch', fetchMock);
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleChat({ input: '聊天必须继续' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+		expect(store.chatHistory.at(-1)?.status).toBe('completed');
+		expect(getMessageText(store.chatHistory.at(-1)!)).toBe('附件分析完成');
+		expect(store.chatSessions[0].summary).toBeUndefined();
+	});
+
+	it('invalidates a summary that covers a regenerated answer', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(22))]);
+		saveConversationSummaries(localStorage, {
+			'long-session': conversationSummary('m-10'),
+		});
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleUpdate(9);
+
+		expect(store.chatSessions[0].summary).toBeUndefined();
+		expect(
+			loadConversationSummaries(localStorage).summaries['long-session'],
+		).toBeUndefined();
+		expect(
+			streamSpy.mock.calls[0][0].messages.some(message =>
+				message.content.includes('[历史会话摘要开始]'),
+			),
+		).toBe(false);
+	});
+
+	it('keeps the original question when its user turn is summary-covered', async () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(22))]);
+		saveConversationSummaries(localStorage, {
+			'long-session': conversationSummary('m-9'),
+		});
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+		store.switchSession('long-session');
+
+		await store.handleUpdate(9);
+
+		expect(store.chatSessions[0].summary).toBeUndefined();
+		expect(streamSpy.mock.calls[0][0].messages).toContainEqual({
+			role: 'user',
+			content: 'content-m-9',
+		});
+	});
+
+	it('migrates the newest embedded summary into dedicated storage', () => {
+		const embeddedSummary = {
+			...conversationSummary('m-4'),
+			updatedAt: 200,
+		};
+		localStorage.setItem(
+			CHAT_SESSIONS_STORAGE_KEY,
+			JSON.stringify([
+				{
+					...storedSession(historyMessages(6)),
+					summary: embeddedSummary,
+				},
+			]),
+		);
+		saveConversationSummaries(localStorage, {
+			'long-session': conversationSummary('m-2'),
+		});
+		const store = useChatStore();
+
+		store.loadDataFromLocalStorage();
+
+		expect(store.chatSessions[0].summary).toEqual(embeddedSummary);
+		expect(
+			loadConversationSummaries(localStorage).summaries['long-session'],
+		).toEqual(embeddedSummary);
+		expect(localStorage.getItem(CHAT_SESSIONS_STORAGE_KEY)).not.toContain(
+			'"summary"',
+		);
+	});
+
+	it('preserves corrupt dedicated summary data while restoring sessions', () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(2))]);
+		localStorage.setItem(CONVERSATION_SUMMARIES_STORAGE_KEY, '{broken');
+		const store = useChatStore();
+
+		store.loadDataFromLocalStorage();
+
+		expect(store.chatSessions).toHaveLength(1);
+		expect(store.chatSessions[0].messages).toHaveLength(2);
+		expect(localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).toBe(
+			'{broken',
+		);
+	});
+
+	it('removes the dedicated summary when deleting its session', () => {
+		saveChatSessions(localStorage, [storedSession(historyMessages(2))]);
+		saveConversationSummaries(localStorage, {
+			'long-session': conversationSummary('m-2'),
+		});
+		const store = useChatStore();
+		store.loadDataFromLocalStorage();
+
+		store.deleteSession('long-session');
+
+		expect(loadConversationSummaries(localStorage).summaries).toEqual({});
+		expect(localStorage.getItem(CONVERSATION_SUMMARIES_STORAGE_KEY)).not.toContain(
+			'long-session',
+		);
 	});
 });

@@ -5,6 +5,7 @@ import type {
 	MessageContent,
 	MessageStatus,
 } from '../../types/chat';
+import { normalizeConversationSummary } from './summaryStorage';
 
 export const CHAT_SESSIONS_STORAGE_KEY = 'debugdiva:sessions:v2';
 export const LEGACY_CHAT_SESSIONS_STORAGE_KEY = 'chatSessions';
@@ -291,7 +292,8 @@ export const normalizeV2Sessions = (
 			createdAt: asTimestamp(session.createdAt) ?? messages[0]?.createdAt ?? updatedAt,
 			updatedAt,
 			messages,
-			summary: session.summary,
+			summary:
+				normalizeConversationSummary(session.summary) ?? undefined,
 			activeAttachmentIds: Array.isArray(session.activeAttachmentIds)
 				? session.activeAttachmentIds.filter(
 						(item): item is string => typeof item === 'string',
@@ -363,20 +365,23 @@ export const saveChatSessions = (
 	storage: StorageLike,
 	sessions: ChatSession[],
 ) => {
-	const persistableSessions = sessions.map(session => ({
-		...session,
-		messages: session.messages.map(message => ({
-			...message,
-			contents: message.contents.map(content => {
-				if (content.type !== 'image') return content;
-				return {
-					type: 'image' as const,
-					attachmentId: content.attachmentId,
-					alt: content.alt,
-				};
-			}),
-		})),
-	}));
+	const persistableSessions = sessions.map(session => {
+		const { summary: _summary, ...sessionWithoutSummary } = session;
+		return {
+			...sessionWithoutSummary,
+			messages: session.messages.map(message => ({
+				...message,
+				contents: message.contents.map(content => {
+					if (content.type !== 'image') return content;
+					return {
+						type: 'image' as const,
+						attachmentId: content.attachmentId,
+						alt: content.alt,
+					};
+				}),
+			})),
+		};
+	});
 	storage.setItem(
 		CHAT_SESSIONS_STORAGE_KEY,
 		JSON.stringify(persistableSessions),
