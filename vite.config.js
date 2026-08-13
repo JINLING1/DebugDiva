@@ -145,8 +145,6 @@ const deepSeekDevProxy = env => ({
 				const result = await chatRequest({
 					request: webRequest,
 					env: {
-						// Legacy VITE_* values stay inside this Node-only proxy because
-						// envPrefix exposes only PUBLIC_* values to browser modules.
 						DEEPSEEK_API_KEY:
 							env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY,
 						DEEPSEEK_BASE_URL:

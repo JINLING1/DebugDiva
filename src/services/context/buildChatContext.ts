@@ -7,8 +7,6 @@ import type {
 import type { ChatAttachment } from '../../types/attachment';
 import type { ProviderMessage } from '../../types/provider';
 
-const LEGACY_LOADING_MARKER = '<div class="loading-spinner"></div>';
-
 export const getMessageText = (message: ChatMessage): string =>
 	message.contents
 		.filter(
@@ -39,7 +37,7 @@ export const appendMessageText = (message: ChatMessage, delta: string) => {
 export const isContextMessage = (message: ChatMessage): boolean => {
 	if (message.status !== 'completed') return false;
 	const text = getMessageText(message).trim();
-	return Boolean(text && text !== LEGACY_LOADING_MARKER);
+	return Boolean(text);
 };
 
 export interface BuildChatContextOptions {
@@ -204,8 +202,6 @@ export const buildChatContext = (
 		context.push({ role: message.role, content });
 	}
 
-	// A summarized/cropped history may no longer contain the original file card.
-	// Keep active documents available by attaching them to the latest user turn.
 	if (lastUserIndex >= 0) {
 		const remainingBlocks = activeIds
 			.filter(id => !injectedIds.has(id))

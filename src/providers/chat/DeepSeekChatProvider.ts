@@ -137,7 +137,6 @@ const providerErrorFromPayload = (
 	});
 };
 
-/** Locate the next SSE event boundary while accepting LF, CRLF, or mixed lines. */
 const findEventBoundary = (
 	buffer: string,
 ): { index: number; length: number } | undefined => {

@@ -198,7 +198,6 @@ export const serializeSummaryRequestPayload = (
 		clientId,
 	});
 
-/** Generate or incrementally update structured conversation memory. */
 export const summarizeConversation = async ({
 	previousSummary,
 	messages,

@@ -47,7 +47,6 @@ const safeTokenCount = (value: unknown) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** Reduces a provider usage object to the numeric fields safe for lifecycle logs. */
 export const extractApiUsage = (value: unknown): ApiUsage | undefined => {
 	if (!isRecord(value)) return undefined;
 
@@ -250,7 +249,6 @@ const complete = (status: number, usage?: ApiUsage) => {
 		try {
 			console.info(JSON.stringify(entry));
 		} catch {
-			// Observability must never affect the API response.
 		}
 	};
 

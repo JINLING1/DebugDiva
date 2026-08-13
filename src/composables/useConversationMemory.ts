@@ -18,8 +18,6 @@ export const SUMMARY_RECENT_MESSAGE_COUNT = 12;
 export const SUMMARY_UPDATE_MESSAGE_COUNT = 8;
 export const MAX_SUMMARY_BATCH_MESSAGES = 32;
 
-// The endpoint accepts at most 128 Unicode characters for clientId. Reserve
-// the worst possible UTF-8 width so the planner stays safe for every valid ID.
 const SUMMARY_CLIENT_ID_SIZE_PLACEHOLDER = '😀'.repeat(128);
 const textEncoder = new TextEncoder();
 
@@ -92,13 +90,9 @@ export interface ConversationSummaryRequestPlan {
 }
 
 export interface ConversationMemoryPlan {
-	/** Every completed, non-empty user/assistant message in source order. */
 	validMessages: SummaryInputMessage[];
-	/** Raw messages that must accompany the usable summary in chat context. */
 	contextMessages: SummaryInputMessage[];
-	/** Omitted when no summary exists or its covered message has disappeared. */
 	usableSummary?: ConversationSummary;
-	/** Present only when the threshold/batch rules allow a summary request. */
 	summaryRequest?: ConversationSummaryRequestPlan;
 	boundary: 'none' | 'valid' | 'missing';
 }
@@ -118,13 +112,6 @@ export const getValidSummaryMessages = (
 			content: truncateSummaryContent(getMessageText(message).trim()),
 		}));
 
-/**
- * Select the lossless raw-message window and, independently, any summary work.
- *
- * Until the next eight-message batch can be summarized, every message after
- * the previous boundary stays in context. This deliberately allows a window
- * larger than 12 for a short time instead of dropping unsummarized turns.
- */
 export const planConversationMemory = (
 	messages: readonly ChatMessage[],
 	summary?: ConversationSummary,
@@ -275,10 +262,6 @@ const isAbortError = (error: unknown): boolean =>
 	'name' in error &&
 	(error as { name?: unknown }).name === 'AbortError';
 
-/**
- * Coordinate background summary requests without coupling them to chat flow.
- * Errors are retained for diagnostics but intentionally never reject trigger().
- */
 export const useConversationMemory = (
 	options: UseConversationMemoryOptions = {},
 ) => {

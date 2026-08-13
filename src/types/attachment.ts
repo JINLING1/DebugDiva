@@ -25,10 +25,6 @@ export interface VisionResult {
 	warnings: string[];
 }
 
-/**
- * Persistable document attachment data. The original File deliberately does
- * not belong to this type and is retained only by useAttachments at runtime.
- */
 export interface DocumentAttachment {
 	id: string;
 	kind: 'document';
@@ -46,11 +42,6 @@ export interface DocumentAttachment {
 	updatedAt: number;
 }
 
-/**
- * An image attachment keeps the original File and its Object URL outside the
- * persisted payload. `previewUrl` is intentionally runtime-only, while the
- * textual vision result can safely survive a refresh.
- */
 export interface ImageAttachment {
 	id: string;
 	kind: 'image';

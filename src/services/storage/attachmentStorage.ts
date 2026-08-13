@@ -145,10 +145,6 @@ const normalizeVisionResult = (value: unknown): VisionResult | undefined => {
 	};
 };
 
-/**
- * Rebuild an attachment from an explicit field allowlist. Runtime-only File,
- * Blob, Base64 and Object URL values are therefore never serialized.
- */
 export const normalizeDocumentAttachment = (
 	value: unknown,
 	now = Date.now(),
@@ -231,11 +227,6 @@ export const normalizeDocumentAttachment = (
 	};
 };
 
-/**
- * Rebuild an image attachment from a strict allowlist. In particular,
- * previewUrl and any accidental File/Blob/Base64 fields never cross the
- * persistence boundary.
- */
 export const normalizeImageAttachment = (
 	value: unknown,
 	now = Date.now(),

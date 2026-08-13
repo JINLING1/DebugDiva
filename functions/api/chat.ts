@@ -80,7 +80,6 @@ const parseChatRequest = (value: unknown): ChatRequest => {
 			);
 		}
 
-		// Only validated provider fields cross the server trust boundary.
 		return { role: message.role, content: message.content };
 	});
 
@@ -126,7 +125,6 @@ const parseUsageEvents = (
 				const payload = JSON.parse(data) as unknown;
 				if (isRecord(payload)) usage = extractApiUsage(payload.usage) ?? usage;
 			} catch {
-				// The client owns stream validation; logging never changes provider bytes.
 			}
 		}
 		boundary = /\r?\n\r?\n/.exec(remainder);
@@ -139,13 +137,11 @@ const parseUsageEvents = (
 				const payload = JSON.parse(line.slice(5).trim()) as unknown;
 				if (isRecord(payload)) usage = extractApiUsage(payload.usage) ?? usage;
 			} catch {
-				// Ignore incomplete or non-JSON terminal data.
 			}
 		}
 		remainder = '';
 	}
 
-	// Usage events are small. Drop an unterminated maliciously large event from logs.
 	if (remainder.length > 64 * 1024) remainder = '';
 	return { remainder, usage };
 };
@@ -179,14 +175,12 @@ const observeChatStream = (
 		try {
 			reader.releaseLock();
 		} catch {
-			// A provider read may still be settling after cancellation.
 		}
 	};
 	const safelyClose = (controller: ReadableStreamDefaultController<Uint8Array>) => {
 		try {
 			controller.close();
 		} catch {
-			// The consumer may already have cancelled the response stream.
 		}
 	};
 	const safelyEnqueue = (

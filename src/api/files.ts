@@ -134,7 +134,6 @@ export const validateParsedDocument = (value: unknown): ParsedDocument => {
 	};
 };
 
-/** Parse one document through the same-origin file API. */
 export const parseDocumentFile = async (
 	file: File,
 	options: ParseDocumentFileOptions = {},

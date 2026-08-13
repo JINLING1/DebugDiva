@@ -136,7 +136,6 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		try {
 			revokeObjectURL(previewUrl);
 		} catch {
-			// Revocation is best-effort. Deleting first guarantees at-most-once use.
 		}
 	};
 
@@ -303,10 +302,6 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		return id;
 	};
 
-	/**
-	 * Queue files synchronously. IDs are available to the composer immediately;
-	 * parsing starts in a microtask and updates the corresponding records.
-	 */
 	const queueFiles = (selectedFiles: Iterable<File> | ArrayLike<File>): string[] => {
 		const selected = Array.from(selectedFiles);
 		const ids: string[] = [];

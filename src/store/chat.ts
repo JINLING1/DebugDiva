@@ -205,9 +205,6 @@ export const useChatStore = defineStore('chat', () => {
 		const coveredIndex = chatHistory.value.findIndex(
 			message => message.id === session.summary?.coveredUntilMessageId,
 		);
-		// The prompt being regenerated must remain in the raw context. If the
-		// summary already covers that user turn, cropping after the summary
-		// boundary would otherwise leave the provider with no question to answer.
 		if (coveredIndex < 0 || coveredIndex >= regeneratedUserIndex) {
 			conversationMemory.cancel(sessionId);
 			setConversationSummary(sessionId, undefined);
@@ -301,7 +298,7 @@ export const useChatStore = defineStore('chat', () => {
 
 		if (result.recoveredFromError) {
 			ElMessage.warning(
-				'部分本地会话无法读取，原始数据已保留，请查看迁移备份。',
+				'部分本地会话无法读取，原始数据已保留，请先在浏览器存储中备份后再清理。',
 			);
 		}
 		if (summaryResult.recoveredFromError) {

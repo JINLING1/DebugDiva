@@ -5,20 +5,18 @@ import {
 } from './localDataManagement';
 
 describe('local data management', () => {
-	it('owns the complete current and legacy key allowlist', () => {
+	it('owns the complete local data key allowlist', () => {
 		expect(DEBUG_DIVA_LOCAL_DATA_KEYS).toEqual([
 			'debugdiva:sessions:v2',
 			'debugdiva:settings:v1',
 			'debugdiva:attachment-results:v1',
 			'debugdiva:summaries:v1',
-			'debugdiva:migration-backup:v1',
 			'debugdiva:client-id:v1',
-			'chatSessions',
 			'theme',
 		]);
 	});
 
-	it('removes every known DebugDiva and legacy key without clearing the origin', () => {
+	it('removes every known DebugDiva key without clearing the origin', () => {
 		const values = new Map<string, string>([
 			...DEBUG_DIVA_LOCAL_DATA_KEYS.map(
 				key => [key, `value:${key}`] as const,

@@ -105,13 +105,10 @@ describe('buildChatContext', () => {
 		},
 	);
 
-	it('filters empty text and the legacy loading marker', () => {
+	it('filters empty text', () => {
 		expect(
 			buildChatContext([
 				message('empty', 'user', 'completed', ['  ']),
-				message('loading', 'assistant', 'completed', [
-					'<div class="loading-spinner"></div>',
-				]),
 			]),
 		).toEqual([]);
 	});

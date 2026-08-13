@@ -93,10 +93,6 @@ const normalizeSummaryList = (value: unknown): string[] | null => {
 	return result;
 };
 
-/**
- * Rebuild a summary from an explicit field allowlist. Message bodies,
- * attachments and accidental runtime fields can therefore never be persisted.
- */
 export const normalizeConversationSummary = (
 	value: unknown,
 ): ConversationSummary | null => {
@@ -195,7 +191,6 @@ export const loadConversationSummaries = (
 				skipped += 1;
 				continue;
 			}
-			// Iteration order makes the last valid duplicate authoritative.
 			summaries.set(entry.sessionId, entry.summary);
 		}
 		skipped += Math.max(0, parsed.entries.length - MAX_CONVERSATION_SUMMARIES);
@@ -339,7 +334,6 @@ export const removeConversationSummary = (
 	};
 };
 
-/** Keep summaries only for sessions that still exist, removing orphaned data. */
 export const retainConversationSummaries = (
 	storage: SummaryStorageLike,
 	sessionIds: readonly string[],

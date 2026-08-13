@@ -154,7 +154,6 @@ export const validateVisionResult = (value: unknown): VisionResult => {
 	};
 };
 
-/** Analyze one image through the same-origin vision API. */
 export const analyzeVisionImage = async (
 	file: File,
 	options: AnalyzeVisionImageOptions = {},

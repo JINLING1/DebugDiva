@@ -27,10 +27,6 @@ const knowledgeQuestionPatterns = [
 	/\b(image generation|image generator)\b.{0,40}\b(work|principle|technology|model|algorithm|tutorial|prompt|page|component|api)\b/i,
 ];
 
-/**
- * Conservatively detects a direct request to create or edit an image.
- * Educational questions remain available to the text model.
- */
 export const detectImageGenerationIntent = (input: string) => {
 	const normalized = input.trim().replace(/\s+/g, ' ');
 	if (!normalized) return false;

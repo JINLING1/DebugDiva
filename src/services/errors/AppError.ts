@@ -7,12 +7,6 @@ export interface AppErrorOptions {
 	cause?: unknown;
 }
 
-/**
- * Application-level error shared by providers and their consumers.
- *
- * The stable fields let the UI select a useful message without depending on a
- * provider's raw response shape.
- */
 export class AppError extends Error {
 	readonly code: string;
 	readonly status?: number;

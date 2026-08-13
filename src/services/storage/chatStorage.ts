@@ -10,8 +10,6 @@ import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../types/attachment';
 import { normalizeConversationSummary } from './summaryStorage';
 
 export const CHAT_SESSIONS_STORAGE_KEY = 'debugdiva:sessions:v2';
-export const LEGACY_CHAT_SESSIONS_STORAGE_KEY = 'chatSessions';
-export const MIGRATION_BACKUP_STORAGE_KEY = 'debugdiva:migration-backup:v1';
 export const MAX_CHAT_STORAGE_RAW_BYTES = 4 * 1024 * 1024;
 export const MAX_CHAT_SESSIONS = 200;
 export const MAX_MESSAGES_PER_SESSION = 2_000;
@@ -29,10 +27,6 @@ const MAX_ALT_LENGTH = 1_000;
 const MAX_CITATION_EXCERPT_LENGTH = 4_000;
 const MAX_ERROR_CODE_LENGTH = 128;
 
-const LEGACY_LOADING_MARKER = '<div class="loading-spinner"></div>';
-const STOPPED_MARKER_PATTERN = /\n*\*\(已停止回复\)\*\s*$|^已停止回复$/;
-const ERROR_MARKER_PATTERN = /^\*\*\[(系统错误|请求失败)\]\*\*\s*/;
-
 export interface StorageLike {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;
@@ -41,25 +35,9 @@ export interface StorageLike {
 
 export interface LoadSessionsResult {
 	sessions: ChatSession[];
-	migrated: boolean;
 	recoveredFromError: boolean;
 	errorCode?: string;
 	error?: string;
-}
-
-interface LegacyMessage {
-	id?: unknown;
-	message?: unknown;
-	isUser?: unknown;
-	isComplete?: unknown;
-	reasoning?: unknown;
-}
-
-interface LegacySession {
-	id?: unknown;
-	title?: unknown;
-	date?: unknown;
-	messages?: unknown;
 }
 
 const asTimestamp = (value: unknown): number | undefined => {
@@ -81,121 +59,11 @@ const timestampFromId = (value: unknown): number | undefined => {
 	return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const createStableId = (sessionId: string, index: number, role: ChatRole) =>
-	`migrated-${sessionId}-${index}-${role}`;
-
-const sanitizeLegacyText = (
-	value: unknown,
-): { text: string; statusHint?: MessageStatus; errorCode?: string } => {
-	if (typeof value !== 'string') return { text: '' };
-	if (value === LEGACY_LOADING_MARKER) {
-		return { text: '', statusHint: 'stopped' };
-	}
-
-	const errorMatch = value.match(ERROR_MARKER_PATTERN);
-	if (errorMatch) {
-		return {
-			text: value.replace(ERROR_MARKER_PATTERN, '').trim(),
-			statusHint: 'error',
-			errorCode:
-				errorMatch[1] === '请求失败' ? 'UPSTREAM_REQUEST_FAILED' : 'CHAT_ERROR',
-		};
-	}
-
-	if (STOPPED_MARKER_PATTERN.test(value)) {
-		return {
-			text: value.replace(STOPPED_MARKER_PATTERN, '').trim(),
-			statusHint: 'stopped',
-		};
-	}
-
-	return { text: value };
-};
-
-const migrateLegacyMessage = (
-	input: LegacyMessage,
+const createFallbackMessageId = (
 	sessionId: string,
 	index: number,
-	fallbackTime: number,
-): ChatMessage => {
-	const role: ChatRole = input.isUser === true ? 'user' : 'assistant';
-	const sanitized = sanitizeLegacyText(input.message);
-	let status: MessageStatus;
-
-	if (role === 'user') {
-		status = 'completed';
-	} else if (sanitized.statusHint) {
-		status = sanitized.statusHint;
-	} else {
-		status = input.isComplete === false ? 'stopped' : 'completed';
-	}
-
-	const text =
-		status === 'stopped' && !sanitized.text ? '已停止回复' : sanitized.text;
-
-	return {
-		id:
-			typeof input.id === 'string' && input.id
-				? input.id
-				: createStableId(sessionId, index, role),
-		role,
-		status,
-		contents: text ? [{ type: 'text', text }] : [],
-		reasoning: typeof input.reasoning === 'string' ? input.reasoning : undefined,
-		errorCode: sanitized.errorCode,
-		createdAt: timestampFromId(input.id) ?? fallbackTime + index,
-	};
-};
-
-export const migrateLegacySessions = (
-	input: unknown,
-	now = Date.now(),
-): ChatSession[] => {
-	if (!Array.isArray(input)) {
-		throw new Error('旧会话数据不是数组');
-	}
-
-	return input.map((rawSession, sessionIndex) => {
-		if (!rawSession || typeof rawSession !== 'object') {
-			throw new Error(`第 ${sessionIndex + 1} 个旧会话格式无效`);
-		}
-
-		const session = rawSession as LegacySession;
-		const sessionId =
-			typeof session.id === 'string' && session.id
-				? session.id
-				: `migrated-session-${sessionIndex}`;
-		const updatedAt = asTimestamp(session.date) ?? timestampFromId(session.id) ?? now;
-		const legacyMessages = Array.isArray(session.messages) ? session.messages : [];
-		const messages = legacyMessages.map((message, messageIndex) => {
-			if (!message || typeof message !== 'object') {
-				throw new Error(
-					`会话 ${sessionId} 的第 ${messageIndex + 1} 条消息格式无效`,
-				);
-			}
-			return migrateLegacyMessage(
-				message as LegacyMessage,
-				sessionId,
-				messageIndex,
-				updatedAt,
-			);
-		});
-		const createdAt =
-			messages[0]?.createdAt ?? timestampFromId(session.id) ?? updatedAt;
-
-		return {
-			id: sessionId,
-			title:
-				typeof session.title === 'string' && session.title.trim()
-					? session.title
-					: '新对话',
-			createdAt,
-			updatedAt,
-			messages,
-			activeAttachmentIds: [],
-		};
-	});
-};
+	role: ChatRole,
+) => `fallback-${sessionId}-${index}-${role}`;
 
 const isRole = (value: unknown): value is ChatRole =>
 	value === 'user' || value === 'assistant' || value === 'system';
@@ -333,7 +201,7 @@ const normalizeV2Message = (
 		id:
 			validIdentifier(message.id, MAX_MESSAGE_ID_LENGTH)
 				? message.id
-				: createStableId(sessionId, index, message.role),
+				: createFallbackMessageId(sessionId, index, message.role),
 		role: message.role,
 		status,
 		contents,
@@ -409,17 +277,6 @@ export const normalizeV2Sessions = (
 	});
 };
 
-const backupRawData = (storage: StorageLike, sourceKey: string, raw: string) => {
-	try {
-		storage.setItem(
-			MIGRATION_BACKUP_STORAGE_KEY,
-			JSON.stringify({ sourceKey, raw, backedUpAt: Date.now() }),
-		);
-	} catch {
-		// 原存储仍保留时，备份写入失败不应造成二次数据破坏。
-	}
-};
-
 export const loadChatSessions = (
 	storage: StorageLike,
 	now = Date.now(),
@@ -430,7 +287,6 @@ export const loadChatSessions = (
 	} catch (error) {
 		return {
 			sessions: [],
-			migrated: false,
 			recoveredFromError: true,
 			errorCode: 'CHAT_STORAGE_READ_FAILED',
 			error: error instanceof Error ? error.message : '会话读取失败',
@@ -440,7 +296,6 @@ export const loadChatSessions = (
 		if (byteLength(v2Raw) > MAX_CHAT_STORAGE_RAW_BYTES) {
 			return {
 				sessions: [],
-				migrated: false,
 				recoveredFromError: true,
 				errorCode: 'CHAT_STORAGE_TOO_LARGE',
 				error: '本地会话超过安全读取上限，请导出后清理',
@@ -449,14 +304,11 @@ export const loadChatSessions = (
 		try {
 			return {
 				sessions: normalizeV2Sessions(JSON.parse(v2Raw), now),
-				migrated: false,
 				recoveredFromError: false,
 			};
 		} catch (error) {
-			backupRawData(storage, CHAT_SESSIONS_STORAGE_KEY, v2Raw);
 			return {
 				sessions: [],
-				migrated: false,
 				recoveredFromError: true,
 				errorCode: 'CHAT_STORAGE_CORRUPTED',
 				error: error instanceof Error ? error.message : 'v2 会话读取失败',
@@ -464,49 +316,7 @@ export const loadChatSessions = (
 		}
 	}
 
-	let legacyRaw: string | null;
-	try {
-		legacyRaw = storage.getItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY);
-	} catch (error) {
-		return {
-			sessions: [],
-			migrated: false,
-			recoveredFromError: true,
-			errorCode: 'CHAT_STORAGE_READ_FAILED',
-			error: error instanceof Error ? error.message : '旧会话读取失败',
-		};
-	}
-	if (legacyRaw === null) {
-		return { sessions: [], migrated: false, recoveredFromError: false };
-	}
-	if (byteLength(legacyRaw) > MAX_CHAT_STORAGE_RAW_BYTES) {
-		return {
-			sessions: [],
-			migrated: false,
-			recoveredFromError: true,
-			errorCode: 'CHAT_STORAGE_TOO_LARGE',
-			error: '旧会话超过安全读取上限，请清理后重试',
-		};
-	}
-
-	backupRawData(storage, LEGACY_CHAT_SESSIONS_STORAGE_KEY, legacyRaw);
-	try {
-		const sessions = migrateLegacySessions(JSON.parse(legacyRaw), now);
-		storage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
-		return {
-			sessions,
-			migrated: true,
-			recoveredFromError: false,
-		};
-	} catch (error) {
-		return {
-			sessions: [],
-			migrated: false,
-			recoveredFromError: true,
-			errorCode: 'LEGACY_CHAT_STORAGE_CORRUPTED',
-			error: error instanceof Error ? error.message : '旧会话迁移失败',
-		};
-	}
+	return { sessions: [], recoveredFromError: false };
 };
 
 export const saveChatSessions = (
@@ -564,7 +374,7 @@ export const saveChatSessions = (
 				return {
 					id: validIdentifier(message.id, MAX_MESSAGE_ID_LENGTH)
 						? message.id
-						: createStableId(sessionId, messageIndex, role),
+						: createFallbackMessageId(sessionId, messageIndex, role),
 					role,
 					status,
 					contents,

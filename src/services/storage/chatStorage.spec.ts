@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
 	CHAT_SESSIONS_STORAGE_KEY,
-	LEGACY_CHAT_SESSIONS_STORAGE_KEY,
 	MAX_CHAT_SESSIONS,
 	MAX_CHAT_STORAGE_RAW_BYTES,
 	MAX_MESSAGES_PER_SESSION,
-	MIGRATION_BACKUP_STORAGE_KEY,
 	loadChatSessions,
-	migrateLegacySessions,
 	normalizeV2Sessions,
 	saveChatSessions,
 	type StorageLike,
@@ -15,7 +12,6 @@ import {
 
 class MemoryStorage implements StorageLike {
 	readonly values = new Map<string, string>();
-	failOnKey?: string;
 	failRead = false;
 
 	getItem(key: string) {
@@ -24,7 +20,6 @@ class MemoryStorage implements StorageLike {
 	}
 
 	setItem(key: string, value: string) {
-		if (key === this.failOnKey) throw new Error('QuotaExceededError');
 		this.values.set(key, value);
 	}
 
@@ -33,87 +28,7 @@ class MemoryStorage implements StorageLike {
 	}
 }
 
-const legacySessions = [
-	{
-		id: '1700000000000',
-		title: '旧会话',
-		date: '2024-01-02T00:00:00.000Z',
-		messages: [
-			{
-				id: 'msg-1700000000100-user',
-				message: '旧 Coze 用户消息',
-				isUser: true,
-				isComplete: false,
-			},
-			{
-				id: 'msg-1700000000200-ai',
-				message: '部分回答\n\n*(已停止回复)*',
-				isUser: false,
-				isComplete: true,
-			},
-			{
-				id: 'msg-1700000000300-ai',
-				message: '**[系统错误]** 网络异常',
-				isUser: false,
-				isComplete: true,
-			},
-			{
-				id: 'msg-1700000000400-ai',
-				message: '<div class="loading-spinner"></div>',
-				isUser: false,
-				isComplete: false,
-			},
-		],
-	},
-];
-
-describe('chat storage migration', () => {
-	it('migrates legacy roles, statuses, text and timestamps safely', () => {
-		const [session] = migrateLegacySessions(legacySessions, 1);
-
-		expect(session).toMatchObject({
-			id: '1700000000000',
-			title: '旧会话',
-			activeAttachmentIds: [],
-		});
-		expect(session.messages[0]).toMatchObject({
-			role: 'user',
-			status: 'completed',
-			createdAt: 1700000000100,
-			contents: [{ type: 'text', text: '旧 Coze 用户消息' }],
-		});
-		expect(session.messages[1]).toMatchObject({
-			role: 'assistant',
-			status: 'stopped',
-			contents: [{ type: 'text', text: '部分回答' }],
-		});
-		expect(session.messages[2]).toMatchObject({
-			status: 'error',
-			errorCode: 'CHAT_ERROR',
-			contents: [{ type: 'text', text: '网络异常' }],
-		});
-		expect(session.messages[3]).toMatchObject({
-			status: 'stopped',
-			contents: [{ type: 'text', text: '已停止回复' }],
-		});
-	});
-
-	it('creates stable fallback ids when legacy ids are missing', () => {
-		const input = [
-			{
-				id: 'session-a',
-				title: '会话',
-				messages: [{ message: '问题', isUser: true, isComplete: false }],
-			},
-		];
-		expect(migrateLegacySessions(input, 100)).toEqual(
-			migrateLegacySessions(input, 100),
-		);
-		expect(migrateLegacySessions(input, 100)[0].messages[0].id).toBe(
-			'migrated-session-a-0-user',
-		);
-	});
-
+describe('chat storage', () => {
 	it('normalizes interrupted v2 messages without leaving pending state', () => {
 		const [session] = normalizeV2Sessions([
 			{
@@ -140,52 +55,27 @@ describe('chat storage migration', () => {
 		});
 	});
 
-	it('prefers valid v2 data and does not migrate legacy data again', () => {
+	it('loads valid v2 data', () => {
 		const storage = new MemoryStorage();
 		storage.setItem(CHAT_SESSIONS_STORAGE_KEY, '[]');
-		storage.setItem(
-			LEGACY_CHAT_SESSIONS_STORAGE_KEY,
-			JSON.stringify(legacySessions),
-		);
 
 		expect(loadChatSessions(storage)).toEqual({
 			sessions: [],
-			migrated: false,
 			recoveredFromError: false,
 		});
-		expect(storage.getItem(MIGRATION_BACKUP_STORAGE_KEY)).toBeNull();
 	});
 
-	it('backs up and migrates legacy data without deleting the legacy key', () => {
+	it('preserves corrupt v2 data without rewriting it', () => {
 		const storage = new MemoryStorage();
-		const raw = JSON.stringify(legacySessions);
-		storage.setItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY, raw);
+		const raw = '{broken';
+		storage.setItem(CHAT_SESSIONS_STORAGE_KEY, raw);
 
-		const result = loadChatSessions(storage, 1);
-
-		expect(result.migrated).toBe(true);
-		expect(result.recoveredFromError).toBe(false);
-		expect(storage.getItem(CHAT_SESSIONS_STORAGE_KEY)).not.toBeNull();
-		expect(storage.getItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
-		const backup = JSON.parse(
-			storage.getItem(MIGRATION_BACKUP_STORAGE_KEY) || '{}',
-		);
-		expect(backup).toMatchObject({
-			sourceKey: LEGACY_CHAT_SESSIONS_STORAGE_KEY,
-			raw,
+		expect(loadChatSessions(storage)).toMatchObject({
+			sessions: [],
+			recoveredFromError: true,
+			errorCode: 'CHAT_STORAGE_CORRUPTED',
 		});
-	});
-
-	it('keeps corrupt data and writes a backup instead of deleting it', () => {
-		const storage = new MemoryStorage();
-		storage.setItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY, '{broken');
-
-		const result = loadChatSessions(storage);
-
-		expect(result.recoveredFromError).toBe(true);
-		expect(result.sessions).toEqual([]);
-		expect(storage.getItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY)).toBe('{broken');
-		expect(storage.getItem(MIGRATION_BACKUP_STORAGE_KEY)).toContain('{broken');
+		expect(storage.getItem(CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
 	});
 
 	it('handles storage read failures without throwing', () => {
@@ -194,7 +84,6 @@ describe('chat storage migration', () => {
 
 		expect(loadChatSessions(storage)).toMatchObject({
 			sessions: [],
-			migrated: false,
 			recoveredFromError: true,
 			errorCode: 'CHAT_STORAGE_READ_FAILED',
 		});
@@ -211,20 +100,6 @@ describe('chat storage migration', () => {
 			errorCode: 'CHAT_STORAGE_TOO_LARGE',
 		});
 		expect(storage.getItem(CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
-		expect(storage.getItem(MIGRATION_BACKUP_STORAGE_KEY)).toBeNull();
-	});
-
-	it('does not remove legacy data when writing v2 fails', () => {
-		const storage = new MemoryStorage();
-		const raw = JSON.stringify(legacySessions);
-		storage.setItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY, raw);
-		storage.failOnKey = CHAT_SESSIONS_STORAGE_KEY;
-
-		const result = loadChatSessions(storage);
-
-		expect(result.recoveredFromError).toBe(true);
-		expect(result.migrated).toBe(false);
-		expect(storage.getItem(LEGACY_CHAT_SESSIONS_STORAGE_KEY)).toBe(raw);
 	});
 
 	it('never persists image preview URLs or runtime-only image fields', () => {
@@ -385,9 +260,9 @@ describe('chat storage migration', () => {
 		expect(stored[0]).not.toHaveProperty('summary');
 	});
 
-	it('keeps only valid embedded summaries for one-time migration', () => {
+	it('keeps only valid embedded summaries', () => {
 		const baseSession = {
-			id: 'legacy-embedded-summary',
+			id: 'embedded-summary',
 			title: '长对话',
 			createdAt: 1,
 			updatedAt: 2,

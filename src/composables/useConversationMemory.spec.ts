@@ -96,12 +96,6 @@ describe('conversation memory planning', () => {
 			chatMessage('stopped', 'assistant', 'stopped'),
 			chatMessage('error', 'assistant', 'error'),
 			chatMessage('empty', 'user', 'completed', '   '),
-			chatMessage(
-				'loading',
-				'assistant',
-				'completed',
-				'<div class="loading-spinner"></div>',
-			),
 			chatMessage('system', 'system'),
 		];
 

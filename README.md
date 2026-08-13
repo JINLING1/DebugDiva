@@ -15,7 +15,7 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 - 文本、PDF、DOCX 在 Pages Function 中解析；原始文件不进入 localStorage。
 - 图片先由 Workers AI 转为描述、OCR 和对象列表，再把纯文本结果交给 DeepSeek。
 - 长对话使用结构化摘要 + 最近消息，摘要失败不阻塞当前聊天。
-- 版本化 localStorage、容量上限、损坏数据保护、旧数据迁移备份、孤儿附件回收。
+- 版本化 localStorage、容量上限、损坏数据保护、孤儿附件回收。
 - 统一错误协议、`requestId`、超时、取消和脱敏日志，服务端不记录完整提示词或文件正文。
 - 会话 JSON 导出和“清除全部本地数据”，导出使用严格字段白名单。
 
@@ -28,7 +28,7 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 | 文档 | 常见文本 / 代码文件、PDF、DOCX；服务端提取纯文本 |
 | 图片 | JPEG、PNG、WebP；Workers AI 描述、OCR、对象识别 |
 | 长对话 | 结构化摘要、最近消息窗口、后台更新、失败回退 |
-| 本地数据 | 会话、设置、解析结果、摘要；导出、清理和版本迁移 |
+| 本地数据 | 会话、设置、解析结果、摘要；导出、清理和容量保护 |
 | 图片生成 | 不支持；明确生图请求在本地固定回复“暂且没有提供图像生成功能” |
 
 ## 架构
@@ -82,7 +82,7 @@ src/features/chat/ChatView.vue       Pinia、浏览器副作用与组件的薄�
 src/providers/                       Chat / Vision Provider 实现
 src/composables/                     附件与长对话记忆编排
 src/services/context/                上下文、摘要与附件文本组装
-src/services/storage/                版本化持久化、迁移、容量保护
+src/services/storage/                版本化持久化、校验与容量保护
 src/services/export/                 会话安全导出
 src/store/                            会话和设置状态机
 functions/api/                       四个 Cloudflare Pages Functions
@@ -161,12 +161,11 @@ debugdiva:sessions:v2
 debugdiva:settings:v1
 debugdiva:attachment-results:v1
 debugdiva:summaries:v1
-debugdiva:migration-backup:v1
 ```
 
 - 原始 `File`、Blob、Object URL、图片 Base64 和 API Key 永不持久化。
 - 刷新后保留文档提取文本和图片分析文字；图片会提示“原图未保存”。
-- 会话加载失败时保留原始值和迁移备份，不用空数据覆盖关联摘要或附件记录。
+- 会话加载失败时保留源键原始值，不用空数据覆盖关联摘要或附件记录。
 - localStorage 是当前浏览器、当前设备的数据，不是账户云存储，也不会跨设备同步。
 - 会话可导出 JSON；文件只包含该会话实际引用的数据，仍可能包含聊天正文、推理文本、文档提取内容和 OCR，分享前应自行检查。
 - “清除全部本地数据”只删除 DebugDiva 自己的键，不调用 `localStorage.clear()`，且操作不可撤销。
@@ -202,4 +201,4 @@ Cloudflare Pages 的构建、Functions 和服务端配置见 [部署说明](docs
 
 ## 测试
 
-测试覆盖 SSE parser、模型映射、上下文过滤、存储迁移、附件解析、视觉结果、摘要规划、组件事件、完整 Pinia 流程、会话导出和本地数据清理。应用级 smoke 测试为未知路由安装 fetch guard，确保不会误调用真实 API。
+测试覆盖 SSE parser、模型映射、上下文过滤、存储校验与恢复、附件解析、视觉结果、摘要规划、组件事件、完整 Pinia 流程、会话导出和本地数据清理。应用级 smoke 测试为未知路由安装 fetch guard，确保不会误调用真实 API。
