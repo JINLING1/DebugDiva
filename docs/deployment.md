@@ -8,15 +8,19 @@
 - 输出目录：`dist`
 - Node.js：22 或更高版本
 
-`wrangler.toml` 声明 Pages 构建产物目录、Workers AI binding 和默认视觉模型。
+`wrangler.toml` 声明 Pages 构建产物目录和百炼 OpenAI 兼容接口地址。
 
 ## 服务端配置
 
 在 Cloudflare Pages 的 Variables and Secrets 中配置：
 
 - Secret：`DEEPSEEK_API_KEY`
+- Secret：`DASHSCOPE_API_KEY`
 - Variable：`DEEPSEEK_BASE_URL=https://api.deepseek.com`
+- Variable：`DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
 
-图片理解使用 `wrangler.toml` 中名称为 `AI` 的 Workers AI binding。服务端密钥和绑定信息不应使用 `VITE_` 或 `PUBLIC_` 前缀。
+图片理解使用百炼 `qwen3.6-flash`，无需配置 Cloudflare Workers AI binding。百炼 API Key 必须与 Base URL 所属地域匹配。
 
-修改 Variables、Secrets 或 binding 后，需要重新部署项目。
+所有服务端密钥都不应使用 `VITE_` 或 `PUBLIC_` 前缀。
+
+修改 Variables 或 Secrets 后，需要重新部署项目。

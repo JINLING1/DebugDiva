@@ -2,8 +2,5 @@ name = "debugdiva"
 compatibility_date = "2026-08-09"
 pages_build_output_dir = "./dist"
 
-[ai]
-binding = "AI"
-
 [vars]
-VISION_MODEL = "@cf/moondream/moondream3.1-9B-A2B"
+DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"

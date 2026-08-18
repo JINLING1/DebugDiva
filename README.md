@@ -1,6 +1,6 @@
 # DebugDiva v2
 
-DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Functions 的 AI 对话应用。前端负责流式交互、附件状态和本地数据管理，服务端统一编排 DeepSeek、文档解析与图片理解能力。
+DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Functions 的 AI 对话应用。前端负责流式交互、附件状态和本地数据管理，服务端统一编排 DeepSeek、文档解析与千问图片理解能力。
 
 项目采用可替换 Provider、统一消息协议和明确的前后端安全边界，并通过浏览器持久化与自动化测试保证复杂交互的可维护性。
 
@@ -13,7 +13,7 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 - 停止生成保留部分内容；仅在尚未输出内容时对可重试 5xx 自动重试一次。
 - Chat / Vision Provider 抽象与服务端模型白名单，浏览器只能提交 `fast`、`deep`、`quality`。
 - 文本、PDF、DOCX 在 Pages Function 中解析；原始文件不进入 localStorage。
-- 图片先由 Workers AI 转为描述、OCR 和对象列表，再把纯文本结果交给 DeepSeek。
+- 图片先由千问 `qwen3.6-flash` 转为描述、OCR 和对象列表，再把纯文本结果交给 DeepSeek。
 - 长对话使用结构化摘要 + 最近消息，摘要失败不阻塞当前聊天。
 - 版本化 localStorage、容量上限、损坏数据保护、孤儿附件回收。
 - 统一错误协议、`requestId`、超时、取消和脱敏日志，服务端不记录完整提示词或文件正文。
@@ -26,7 +26,7 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 | 文本聊天 | DeepSeek SSE、Markdown、代码高亮、停止、重试、重新生成 |
 | 模型模式 | 快速回答、深度思考、高质量；服务端固定映射模型和 thinking 参数 |
 | 文档 | 常见文本 / 代码文件、PDF、DOCX；服务端提取纯文本 |
-| 图片 | JPEG、PNG、WebP；Workers AI 描述、OCR、对象识别 |
+| 图片 | JPEG、PNG、WebP；千问 `qwen3.6-flash` 描述、OCR、对象识别 |
 | 长对话 | 结构化摘要、最近消息窗口、后台更新、失败回退 |
 | 本地数据 | 会话、设置、解析结果、摘要；导出、清理和容量保护 |
 | 图片生成 | 不支持；明确生图请求在本地固定回复“暂且没有提供图像生成功能” |
@@ -61,17 +61,17 @@ flowchart LR
   Memory --> SummaryAPI
   ChatAPI --> DeepSeek["DeepSeek API"]
   SummaryAPI --> DeepSeek
-  VisionAPI --> WorkersAI["Workers AI binding"]
+  VisionAPI --> Qwen["阿里云百炼 qwen3.6-flash"]
   FileAPI --> Parsers["unpdf + fflate + saxes"]
 
-  Secrets["API Key / AI binding\n仅存在于服务端"] -.安全边界.-> Pages
+  Secrets["API Key\n仅存在于服务端"] -.安全边界.-> Pages
 ```
 
 四条主要数据流：
 
 1. 聊天：组件事件 → Pinia → `DeepSeekChatProvider` → `/api/chat` → SSE 增量渲染。
 2. 文档：浏览器临时上传原文件 → `/api/files/parse` → 返回提取文本 → 作为附件上下文注入聊天。
-3. 图片：浏览器临时上传原图 → `/api/vision/analyze` → Workers AI 返回文字分析 → DeepSeek 只接收文字。
+3. 图片：浏览器临时上传原图 → `/api/vision/analyze` → 千问返回结构化文字分析 → DeepSeek 只接收文字。
 4. 摘要：对话超过阈值后后台调用 `/api/summarize`；下一轮上下文按“能力指令 → 摘要 → 激活附件 → 最近消息”组装。
 
 ## 目录与职责
@@ -97,16 +97,14 @@ functions/_shared/                   模型映射、解析器、视觉与 API �
 pnpm install --frozen-lockfile
 ```
 
-复制 `.env.example` 为 `.env`，填写服务端配置：
+复制 `.env.example` 为 `.env.local`，填写服务端配置：
 
 ```env
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 
-# 仅用于 pnpm dev 下的本地图片分析代理
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-CLOUDFLARE_API_TOKEN=your_api_token
-VISION_MODEL=@cf/moondream/moondream3.1-9B-A2B
+DASHSCOPE_API_KEY=your_server_only_api_key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 
 启动开发服务器：
@@ -134,7 +132,7 @@ git diff --check
 | --- | --- | --- |
 | `POST /api/chat` | JSON：messages、mode、匿名 clientId | 校验并安全映射模式，代理 DeepSeek SSE |
 | `POST /api/files/parse` | multipart：file | 解析文本、PDF、DOCX，返回纯文本和元数据 |
-| `POST /api/vision/analyze` | multipart：file、task | 校验图片并调用 Workers AI binding |
+| `POST /api/vision/analyze` | multipart：file、task | 校验图片并调用千问 `qwen3.6-flash` |
 | `POST /api/summarize` | JSON：精简消息、previousSummary、匿名 clientId | 使用固定快速模式生成结构化摘要 |
 
 统一错误体：
@@ -173,7 +171,7 @@ debugdiva:summaries:v1
 ## 可靠性与安全设计
 
 - 浏览器只发送 `mode`，模型名、thinking 和 reasoning effort 在服务端白名单映射。
-- Chat 最长 60 秒；Summary / Vision 最长 20 秒；文件解析另有页级 deadline。
+- Chat / Vision 最长 60 秒；Summary 最长 20 秒；文件解析另有页级 deadline。
 - 页面只允许一个聊天请求；Chat、文件解析和视觉分析分别管理 AbortController。
 - 无输出的可重试 5xx 最多自动重试一次；已有输出后断流保留部分文本并显示错误。
 - 服务端校验 Content-Type、请求大小、消息数量、角色、文本、文件 magic bytes、图片尺寸和模型模式。

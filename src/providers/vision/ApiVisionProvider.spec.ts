@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { VisionFetch } from '../../api/vision';
-import { WorkersAIVisionProvider } from './WorkersAIVisionProvider';
+import { ApiVisionProvider } from './ApiVisionProvider';
 
 const result = {
 	summary: 'A screenshot',
@@ -11,7 +11,7 @@ const result = {
 	warnings: [],
 };
 
-describe('WorkersAIVisionProvider', () => {
+describe('ApiVisionProvider', () => {
 	it('implements the provider contract through the same-origin endpoint', async () => {
 		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
 			new Response(JSON.stringify({ data: result }), {
@@ -19,7 +19,7 @@ describe('WorkersAIVisionProvider', () => {
 				headers: { 'content-type': 'application/json' },
 			}),
 		);
-		const provider = new WorkersAIVisionProvider(fetchMock);
+		const provider = new ApiVisionProvider(fetchMock);
 		const file = new File(['image'], 'screen.png', { type: 'image/png' });
 		const controller = new AbortController();
 
@@ -39,7 +39,7 @@ describe('WorkersAIVisionProvider', () => {
 		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
 			new Response(JSON.stringify({ data: result }), { status: 200 }),
 		);
-		const provider = new WorkersAIVisionProvider(fetchMock);
+		const provider = new ApiVisionProvider(fetchMock);
 
 		await provider.analyze(
 			new File(['image'], 'screen.png', { type: 'image/png' }),

@@ -25,7 +25,7 @@ import { storeToRefs } from 'pinia';
 import { ElMessage } from 'element-plus';
 import ChatWindow from '../../components/chat/ChatWindow.vue';
 import { useAttachments } from '../../composables/useAttachments';
-import { WorkersAIVisionProvider } from '../../providers/vision/WorkersAIVisionProvider';
+import { ApiVisionProvider } from '../../providers/vision/ApiVisionProvider';
 import { getMessageText } from '../../services/context/buildChatContext';
 import { useChatStore } from '../../store/chat';
 import { useSettingsStore } from '../../store/settings';
@@ -34,7 +34,7 @@ import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../types/attachment';
 const chatStore = useChatStore();
 const settingsStore = useSettingsStore();
 const attachmentManager = useAttachments({
-	visionProvider: new WorkersAIVisionProvider(),
+	visionProvider: new ApiVisionProvider(),
 });
 const { records: attachmentRecords, storageError } = attachmentManager;
 const {

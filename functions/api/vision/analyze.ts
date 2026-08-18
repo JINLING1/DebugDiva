@@ -8,13 +8,12 @@ import {
 	MAX_IMAGE_FILE_SIZE,
 	VISION_TIMEOUT_MS,
 	type VisionTask,
-	type WorkersAIBinding,
 	VisionAnalysisError,
 } from '../../_shared/visionAnalysis';
 
 interface Env {
-	AI?: WorkersAIBinding;
-	VISION_MODEL?: string;
+	DASHSCOPE_API_KEY?: string;
+	DASHSCOPE_BASE_URL?: string;
 }
 
 const MULTIPART_OVERHEAD_ALLOWANCE = 1024 * 1024;
@@ -113,8 +112,10 @@ export const onRequestPost = async ({
 		const result = await analyzeImageFile(
 			files[0],
 			taskValue,
-			env.AI,
-			env.VISION_MODEL,
+			{
+				apiKey: env.DASHSCOPE_API_KEY,
+				baseUrl: env.DASHSCOPE_BASE_URL,
+			},
 			scope.signal,
 		);
 		return lifecycle.json({ data: result });
@@ -131,20 +132,17 @@ export const onRequestPost = async ({
 			return lifecycle.error('REQUEST_ABORTED', '图片分析请求已取消', 499, false);
 		}
 		if (error instanceof VisionAnalysisError) {
-			const retryable =
-				error.code === 'VISION_ANALYSIS_FAILED' ||
-				error.code === 'INVALID_VISION_RESPONSE';
 			return lifecycle.error(
 				error.code,
 				error.message,
 				error.status,
-				retryable,
+				error.retryable,
 			);
 		}
 		return lifecycle.error(
-			'VISION_ANALYSIS_FAILED',
+			'VISION_SERVICE_UNAVAILABLE',
 			'图片分析服务暂时不可用，请稍后重试',
-			502,
+			503,
 			true,
 		);
 	} finally {

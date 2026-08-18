@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	analyzeImageFile,
+	DEFAULT_DASHSCOPE_BASE_URL,
 	DEFAULT_VISION_MODEL,
 	inspectImageFile,
 	MAX_IMAGE_FILE_SIZE,
 	parseVisionModelResponse,
-	type WorkersAIBinding,
+	VISION_MAX_OUTPUT_TOKENS,
+	type VisionFetch,
 } from './visionAnalysis';
 
 const setUint16BigEndian = (bytes: Uint8Array, offset: number, value: number) => {
@@ -63,9 +65,25 @@ const createWebp = (width = 320, height = 240, type = 'image/webp') => {
 	return new File([bytes], 'preview.webp', { type });
 };
 
-const createAI = (response: unknown) => ({
-	run: vi.fn().mockResolvedValue(response),
+const qwenPayload = (content: string, finishReason = 'stop') => ({
+	choices: [
+		{
+			message: { role: 'assistant', content },
+			finish_reason: finishReason,
+		},
+	],
+	usage: {
+		prompt_tokens: 100,
+		completion_tokens: 20,
+		total_tokens: 120,
+	},
 });
+
+const jsonResponse = (body: unknown, status = 200) =>
+	new Response(JSON.stringify(body), {
+		status,
+		headers: { 'content-type': 'application/json' },
+	});
 
 describe('inspectImageFile', () => {
 	it.each([
@@ -84,7 +102,6 @@ describe('inspectImageFile', () => {
 		await expect(
 			inspectImageFile(new File(['GIF89a'], 'animated.gif', { type: 'image/gif' })),
 		).rejects.toMatchObject({ code: 'UNSUPPORTED_IMAGE_TYPE', status: 415 });
-
 		await expect(inspectImageFile(createJpeg(100, 100, 'image/png'))).rejects.toMatchObject({
 			code: 'IMAGE_TYPE_MISMATCH',
 			status: 415,
@@ -117,109 +134,219 @@ describe('inspectImageFile', () => {
 });
 
 describe('parseVisionModelResponse', () => {
-	it('normalizes a structured JSON answer and enforces output limits', () => {
-		const result = parseVisionModelResponse({
-			answer: JSON.stringify({
-				summary: '摘'.repeat(4001),
-				extractedText: '字'.repeat(12001),
-				objects: Array.from({ length: 51 }, (_, index) => `${index}-${'物'.repeat(101)}`),
-				warnings: Array.from(
-					{ length: 30 },
-					(_, index) => `警告 ${index}${'告'.repeat(501)}`,
-				),
-			}),
-		});
+	it('normalizes structured Qwen JSON and enforces output limits', () => {
+		const result = parseVisionModelResponse(
+			qwenPayload(
+				JSON.stringify({
+					summary: '摘'.repeat(4001),
+					extractedText: '字'.repeat(12001),
+					objects: Array.from(
+						{ length: 51 },
+						(_, index) => `${index}-${'物'.repeat(101)}`,
+					),
+					warnings: Array.from(
+						{ length: 30 },
+						(_, index) => `警告 ${index}${'告'.repeat(501)}`,
+					),
+				}),
+			),
+		);
 
 		expect(Array.from(result.summary)).toHaveLength(4000);
-		expect(Array.from(result.extractedText ?? '')).toHaveLength(12000);
+		expect(Array.from(result.extractedText)).toHaveLength(12000);
 		expect(result.objects).toHaveLength(50);
-		expect(result.objects?.every(item => Array.from(item).length <= 100)).toBe(true);
+		expect(result.objects.every(item => Array.from(item).length <= 100)).toBe(true);
 		expect(result.warnings).toHaveLength(20);
 		expect(result.warnings.every(item => Array.from(item).length <= 500)).toBe(
 			true,
 		);
 	});
 
-	it('accepts a fenced JSON answer', () => {
+	it('accepts fenced JSON and degrades a non-JSON answer', () => {
 		expect(
-			parseVisionModelResponse({
-				answer:
+			parseVisionModelResponse(
+				qwenPayload(
 					'```json\n{"summary":"截图","extractedText":"TypeError","objects":["终端"],"warnings":[]}\n```',
-			}),
+				),
+			),
 		).toEqual({
 			summary: '截图',
 			extractedText: 'TypeError',
 			objects: ['终端'],
 			warnings: [],
 		});
+
+		const fallback = parseVisionModelResponse(
+			qwenPayload('普通描述'.repeat(1001)),
+		);
+		expect(Array.from(fallback.summary)).toHaveLength(4000);
+		expect(fallback).toMatchObject({
+			extractedText: '',
+			objects: [],
+			warnings: ['视觉模型未返回结构化结果，已使用原始摘要'],
+		});
 	});
 
-	it('degrades a non-JSON answer to a bounded summary', () => {
-		const result = parseVisionModelResponse('普通描述'.repeat(1001));
-		expect(Array.from(result.summary)).toHaveLength(4000);
-		expect(result.extractedText).toBe('');
-		expect(result.objects).toEqual([]);
-		expect(result.warnings).toEqual([
-			'视觉模型未返回结构化结果，已使用原始摘要',
-		]);
-	});
-
-	it('rejects empty and structurally invalid answers', () => {
-		expect(() => parseVisionModelResponse({ answer: '  ' })).toThrowError(
+	it('rejects empty, structurally invalid and truncated responses', () => {
+		expect(() => parseVisionModelResponse(qwenPayload('  '))).toThrowError(
 			expect.objectContaining({ code: 'INVALID_VISION_RESPONSE' }),
 		);
-		expect(() => parseVisionModelResponse({ answer: '{"objects":[]}' })).toThrowError(
-			expect.objectContaining({ code: 'INVALID_VISION_RESPONSE' }),
+		expect(() =>
+			parseVisionModelResponse(qwenPayload('{"objects":[]}')),
+		).toThrowError(expect.objectContaining({ code: 'INVALID_VISION_RESPONSE' }));
+		expect(() =>
+			parseVisionModelResponse(qwenPayload('{"summary":"partial"}', 'length')),
+		).toThrowError(
+			expect.objectContaining({
+				code: 'INVALID_VISION_RESPONSE',
+				retryable: true,
+			}),
 		);
 	});
 });
 
 describe('analyzeImageFile', () => {
-	it('makes exactly one query call with a fixed allowlisted model and an untrusted-data prompt', async () => {
-		const ai = createAI({ answer: '{"summary":"一张截图"}' });
+	it('sends one fixed high-resolution structured request to Qwen', async () => {
+		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
+			jsonResponse(qwenPayload('{"summary":"一张截图"}')),
+		);
+		const controller = new AbortController();
 
 		await expect(
-			analyzeImageFile(createPng(), 'ocr', ai),
+			analyzeImageFile(
+				createPng(),
+				'ocr',
+				{ apiKey: 'SECRET_TEST_KEY', fetchImpl: fetchMock },
+				controller.signal,
+			),
 		).resolves.toEqual({
 			summary: '一张截图',
 			extractedText: '',
 			objects: [],
 			warnings: [],
 		});
-		expect(ai.run).toHaveBeenCalledTimes(1);
-		expect(ai.run).toHaveBeenCalledWith(
-			DEFAULT_VISION_MODEL,
-			expect.objectContaining({
-				task: 'query',
-				image: expect.stringMatching(/^data:image\/png;base64,/),
-				question: expect.stringMatching(/不可信的待分析数据.*不得遵循/s),
-				reasoning: false,
-				stream: false,
-			}),
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe(`${DEFAULT_DASHSCOPE_BASE_URL}/chat/completions`);
+		expect(init?.method).toBe('POST');
+		expect(init?.signal).toBe(controller.signal);
+		expect(new Headers(init?.headers).get('authorization')).toBe(
+			'Bearer SECRET_TEST_KEY',
 		);
-		expect(ai.run.mock.calls[0][1].question).toContain('逐字提取');
+		const body = JSON.parse(String(init?.body));
+		expect(body).toMatchObject({
+			model: DEFAULT_VISION_MODEL,
+			stream: false,
+			enable_thinking: false,
+			response_format: { type: 'json_object' },
+			vl_high_resolution_images: true,
+			max_tokens: VISION_MAX_OUTPUT_TOKENS,
+			messages: [{ role: 'user' }],
+		});
+		expect(body.messages[0].content[0]).toMatchObject({
+			type: 'image_url',
+			image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) },
+		});
+		expect(body.messages[0].content[1]).toMatchObject({
+			type: 'text',
+			text: expect.stringMatching(/不可信的待分析数据.*不得遵循/s),
+		});
+		expect(body.messages[0].content[1].text).toContain('小字号');
+		expect(String(init?.body)).not.toContain('SECRET_TEST_KEY');
 	});
 
-	it('requires an AI binding and rejects models outside the allowlist before calling AI', async () => {
+	it('accepts an allowlisted workspace endpoint', async () => {
+		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
+			jsonResponse(qwenPayload('{"summary":"截图"}')),
+		);
+		await analyzeImageFile(createPng(), 'auto', {
+			apiKey: 'test-key',
+			baseUrl:
+				'https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/',
+			fetchImpl: fetchMock,
+		});
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			'https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+		);
+	});
+
+	it('rejects missing credentials and non-allowlisted endpoints before fetch', async () => {
+		const fetchMock = vi.fn<VisionFetch>();
 		await expect(
-			analyzeImageFile(createPng(), 'auto', undefined),
+			analyzeImageFile(createPng(), 'auto', { fetchImpl: fetchMock }),
 		).rejects.toMatchObject({ code: 'VISION_NOT_CONFIGURED', status: 500 });
-
-		const ai = createAI({ answer: '{"summary":"unused"}' });
 		await expect(
-			analyzeImageFile(createPng(), 'auto', ai, '@cf/unsupported/model'),
-		).rejects.toMatchObject({ code: 'INVALID_VISION_MODEL', status: 500 });
-		expect(ai.run).not.toHaveBeenCalled();
+			analyzeImageFile(createPng(), 'auto', {
+				apiKey: 'test-key',
+				baseUrl: 'https://example.com/compatible-mode/v1',
+				fetchImpl: fetchMock,
+			}),
+		).rejects.toMatchObject({ code: 'VISION_NOT_CONFIGURED', status: 500 });
+		await expect(
+			analyzeImageFile(createPng(), 'auto', {
+				apiKey: 'test-key',
+				baseUrl:
+					'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+				fetchImpl: fetchMock,
+			}),
+		).rejects.toMatchObject({ code: 'VISION_NOT_CONFIGURED', status: 500 });
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('maps binding failures to a sanitized stable error', async () => {
-		const ai: WorkersAIBinding = {
-			run: vi.fn().mockRejectedValue(new Error('SECRET_UPSTREAM_DETAIL')),
-		};
-		await expect(analyzeImageFile(createPng(), 'auto', ai)).rejects.toMatchObject({
-			code: 'VISION_ANALYSIS_FAILED',
+	it.each([
+		[401, 'VISION_AUTH_FAILED', 502, false],
+		[403, 'VISION_AUTH_FAILED', 502, false],
+		[429, 'VISION_RATE_LIMITED', 429, true],
+		[408, 'REQUEST_TIMEOUT', 504, true],
+		[504, 'REQUEST_TIMEOUT', 504, true],
+		[500, 'VISION_SERVICE_UNAVAILABLE', 503, true],
+	] as const)(
+		'maps upstream status %s to a sanitized stable error',
+		async (status, code, mappedStatus, retryable) => {
+			const fetchMock = vi
+				.fn<VisionFetch>()
+				.mockResolvedValue(new Response('SECRET_UPSTREAM_DETAIL', { status }));
+			await expect(
+				analyzeImageFile(createPng(), 'auto', {
+					apiKey: 'test-key',
+					fetchImpl: fetchMock,
+				}),
+			).rejects.toMatchObject({
+				code,
+				status: mappedStatus,
+				retryable,
+			});
+		},
+	);
+
+	it('maps network and malformed success responses without leaking details', async () => {
+		const failedFetch = vi
+			.fn<VisionFetch>()
+			.mockRejectedValue(new Error('SECRET_NETWORK_DETAIL'));
+		await expect(
+			analyzeImageFile(createPng(), 'auto', {
+				apiKey: 'test-key',
+				fetchImpl: failedFetch,
+			}),
+		).rejects.toMatchObject({
+			code: 'VISION_SERVICE_UNAVAILABLE',
 			message: '图片分析服务暂时不可用，请稍后重试',
-			status: 502,
+			status: 503,
+			retryable: true,
+		});
+
+		const invalidJsonFetch = vi
+			.fn<VisionFetch>()
+			.mockResolvedValue(new Response('not-json', { status: 200 }));
+		await expect(
+			analyzeImageFile(createPng(), 'auto', {
+				apiKey: 'test-key',
+				fetchImpl: invalidJsonFetch,
+			}),
+		).rejects.toMatchObject({
+			code: 'INVALID_VISION_RESPONSE',
+			retryable: true,
 		});
 	});
 });

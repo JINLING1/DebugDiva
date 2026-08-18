@@ -227,45 +227,6 @@ const fileParseDevProxy = () => ({
 	},
 });
 
-const createWorkersAIDevBinding = env => {
-	const accountId = env.CLOUDFLARE_ACCOUNT_ID;
-	const apiToken = env.CLOUDFLARE_API_TOKEN;
-	if (!accountId || !apiToken) return undefined;
-
-	return {
-		async run(model, input) {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 20_000);
-			try {
-				const upstream = await fetch(
-					`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
-					{
-						method: 'POST',
-						headers: {
-							Authorization: `Bearer ${apiToken}`,
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify(input),
-						signal: controller.signal,
-					},
-				);
-				const payload = await upstream.json().catch(() => undefined);
-				if (
-					!upstream.ok ||
-					!payload ||
-					typeof payload !== 'object' ||
-					!('result' in payload)
-				) {
-					throw new Error('Workers AI request failed');
-				}
-				return payload.result;
-			} finally {
-				clearTimeout(timeout);
-			}
-		},
-	};
-};
-
 const visionAnalyzeDevProxy = env => ({
 	name: 'vision-analyze-dev-proxy',
 	configureServer(server) {
@@ -288,6 +249,10 @@ const visionAnalyzeDevProxy = env => ({
 				return;
 			}
 
+			const controller = new AbortController();
+			response.on('close', () => {
+				if (!response.writableEnded) controller.abort();
+			});
 			try {
 				const body = await readBinaryRequestBody(request);
 				const headers = new Headers();
@@ -297,29 +262,38 @@ const visionAnalyzeDevProxy = env => ({
 				}
 				const webRequest = new Request(
 					'http://localhost/api/vision/analyze',
-					{ method: 'POST', headers, body },
+					{ method: 'POST', headers, body, signal: controller.signal },
 				);
 				const result = await analyzeVisionRequest({
 					request: webRequest,
 					env: {
-						AI: createWorkersAIDevBinding(env),
-						VISION_MODEL: env.VISION_MODEL,
+						DASHSCOPE_API_KEY: env.DASHSCOPE_API_KEY,
+						DASHSCOPE_BASE_URL: env.DASHSCOPE_BASE_URL,
 					},
 				});
+				if (response.destroyed) return;
 				response.statusCode = result.status;
 				result.headers.forEach((value, name) => response.setHeader(name, value));
 				response.end(Buffer.from(await result.arrayBuffer()));
 			} catch (error) {
-				if (response.writableEnded) return;
+				if (response.writableEnded || response.destroyed) return;
 				sendJsonError(
 					response,
-					error?.code === 'FILE_TOO_LARGE' ? 413 : 500,
+					error?.code === 'FILE_TOO_LARGE'
+						? 413
+						: error?.name === 'AbortError'
+							? 499
+							: 500,
 					error?.code === 'FILE_TOO_LARGE'
 						? 'FILE_TOO_LARGE'
-						: 'VISION_ANALYSIS_FAILED',
+						: error?.name === 'AbortError'
+							? 'REQUEST_ABORTED'
+							: 'VISION_SERVICE_UNAVAILABLE',
 					error?.code === 'FILE_TOO_LARGE'
 						? error.message
-						: '图片分析服务暂时不可用，请稍后重试',
+						: error?.name === 'AbortError'
+							? '图片分析请求已取消'
+							: '图片分析服务暂时不可用，请稍后重试',
 				);
 			}
 		});

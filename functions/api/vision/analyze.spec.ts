@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	DEFAULT_VISION_MODEL,
 	VISION_TIMEOUT_MS,
-	type WorkersAIBinding,
+	type VisionFetch,
 } from '../../_shared/visionAnalysis';
 import { onRequestPost } from './analyze';
 
@@ -32,27 +32,48 @@ const createRequest = (file: File, task?: string, signal?: AbortSignal) => {
 	});
 };
 
-const createAI = (answer: unknown = { answer: '{"summary":"代码编辑器截图"}' }) => ({
-	run: vi.fn().mockResolvedValue(answer),
+const qwenPayload = (content: string, finishReason = 'stop') => ({
+	choices: [
+		{
+			message: { role: 'assistant', content },
+			finish_reason: finishReason,
+		},
+	],
 });
+
+const responseWithContent = (content: string, finishReason = 'stop') =>
+	new Response(JSON.stringify(qwenPayload(content, finishReason)), {
+		status: 200,
+		headers: { 'content-type': 'application/json' },
+	});
+
+const env = {
+	DASHSCOPE_API_KEY: 'SECRET_SERVER_KEY',
+};
+
+let fetchMock: ReturnType<typeof vi.fn<VisionFetch>>;
 
 describe('POST /api/vision/analyze', () => {
 	beforeEach(() => {
 		vi.spyOn(console, 'info').mockImplementation(() => undefined);
+		fetchMock = vi
+			.fn<VisionFetch>()
+			.mockResolvedValue(responseWithContent('{"summary":"代码编辑器截图"}'));
+		vi.stubGlobal('fetch', fetchMock);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});
 
 	it.each(['describe', 'ocr', 'auto'] as const)(
 		'accepts task=%s and returns the stable success envelope',
 		async task => {
-			const ai = createAI();
 			const response = await onRequestPost({
 				request: createRequest(createPng(), task),
-				env: { AI: ai },
+				env,
 			});
 
 			expect(response.status).toBe(200);
@@ -67,22 +88,20 @@ describe('POST /api/vision/analyze', () => {
 					warnings: [],
 				},
 			});
-			expect(ai.run).toHaveBeenCalledTimes(1);
+			expect(fetchMock).toHaveBeenCalledTimes(1);
 		},
 	);
 
 	it('defaults the task to auto and uses the fixed model', async () => {
-		const ai = createAI();
 		const response = await onRequestPost({
 			request: createRequest(createPng()),
-			env: { AI: ai, VISION_MODEL: DEFAULT_VISION_MODEL },
+			env,
 		});
 
 		expect(response.status).toBe(200);
-		expect(ai.run).toHaveBeenCalledWith(
-			DEFAULT_VISION_MODEL,
-			expect.objectContaining({ question: expect.stringContaining('综合描述图片') }),
-		);
+		const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+		expect(requestBody.model).toBe(DEFAULT_VISION_MODEL);
+		expect(requestBody.messages[0].content[1].text).toContain('综合分析整体场景');
 	});
 
 	it('validates multipart fields, task and file name before analysis', async () => {
@@ -92,13 +111,13 @@ describe('POST /api/vision/analyze', () => {
 				headers: { 'Content-Type': 'application/json' },
 				body: '{}',
 			}),
-			env: {},
+			env,
 		});
 		expect(wrongContentType.status).toBe(415);
 
 		const invalidTask = await onRequestPost({
 			request: createRequest(createPng(), 'detect'),
-			env: {},
+			env,
 		});
 		expect(invalidTask.status).toBe(400);
 		await expect(invalidTask.json()).resolves.toMatchObject({
@@ -107,21 +126,27 @@ describe('POST /api/vision/analyze', () => {
 
 		const longName = await onRequestPost({
 			request: createRequest(createPng(`${'a'.repeat(252)}.png`)),
-			env: {},
+			env,
 		});
 		expect(longName.status).toBe(400);
 		await expect(longName.json()).resolves.toMatchObject({
 			error: { code: 'INVALID_REQUEST' },
 		});
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('returns fenced JSON and non-JSON fallback results without extra AI calls', async () => {
-		const fencedAI = createAI({
-			answer: '```json\n{"summary":"截图","extractedText":"Error"}\n```',
-		});
+	it('returns fenced JSON and non-JSON fallback results without extra calls', async () => {
+		fetchMock
+			.mockResolvedValueOnce(
+				responseWithContent(
+					'```json\n{"summary":"截图","extractedText":"Error"}\n```',
+				),
+			)
+			.mockResolvedValueOnce(responseWithContent('一张包含终端的截图'));
+
 		const fencedResponse = await onRequestPost({
 			request: createRequest(createPng()),
-			env: { AI: fencedAI },
+			env,
 		});
 		await expect(fencedResponse.json()).resolves.toEqual({
 			data: {
@@ -131,12 +156,10 @@ describe('POST /api/vision/analyze', () => {
 				warnings: [],
 			},
 		});
-		expect(fencedAI.run).toHaveBeenCalledTimes(1);
 
-		const fallbackAI = createAI({ answer: '一张包含终端的截图' });
 		const fallbackResponse = await onRequestPost({
 			request: createRequest(createPng()),
-			env: { AI: fallbackAI },
+			env,
 		});
 		await expect(fallbackResponse.json()).resolves.toEqual({
 			data: {
@@ -146,71 +169,105 @@ describe('POST /api/vision/analyze', () => {
 				warnings: ['视觉模型未返回结构化结果，已使用原始摘要'],
 			},
 		});
-		expect(fallbackAI.run).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
-	it('reports missing binding and disallowed server model without calling AI', async () => {
+	it('reports missing credentials and invalid base URL without calling upstream', async () => {
 		const missing = await onRequestPost({
 			request: createRequest(createPng()),
 			env: {},
 		});
 		expect(missing.status).toBe(500);
 		await expect(missing.json()).resolves.toMatchObject({
-			error: { code: 'VISION_NOT_CONFIGURED' },
+			error: { code: 'VISION_NOT_CONFIGURED', retryable: false },
 		});
 
-		const ai = createAI();
-		const disallowed = await onRequestPost({
+		const invalidBaseUrl = await onRequestPost({
 			request: createRequest(createPng()),
-			env: { AI: ai, VISION_MODEL: '@cf/not-allowed' },
+			env: {
+				...env,
+				DASHSCOPE_BASE_URL: 'https://example.com/compatible-mode/v1',
+			},
 		});
-		expect(disallowed.status).toBe(500);
-		await expect(disallowed.json()).resolves.toMatchObject({
-			error: { code: 'INVALID_VISION_MODEL' },
+		expect(invalidBaseUrl.status).toBe(500);
+		await expect(invalidBaseUrl.json()).resolves.toMatchObject({
+			error: { code: 'VISION_NOT_CONFIGURED', retryable: false },
 		});
-		expect(ai.run).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('sanitizes empty and upstream error responses without leaking binary or provider details', async () => {
+	it.each([
+		[401, 'VISION_AUTH_FAILED', 502, false],
+		[429, 'VISION_RATE_LIMITED', 429, true],
+		[500, 'VISION_SERVICE_UNAVAILABLE', 503, true],
+	] as const)(
+		'maps upstream status %s to the stable error envelope',
+		async (upstreamStatus, code, status, retryable) => {
+			fetchMock.mockResolvedValueOnce(
+				new Response('SECRET_PROVIDER_RESPONSE', { status: upstreamStatus }),
+			);
+			const response = await onRequestPost({
+				request: createRequest(createPng()),
+				env,
+			});
+			expect(response.status).toBe(status);
+			await expect(response.json()).resolves.toMatchObject({
+				error: { code, retryable },
+			});
+		},
+	);
+
+	it('sanitizes empty and network error responses without leaking secrets', async () => {
+		fetchMock.mockResolvedValueOnce(responseWithContent(''));
 		const emptyResponse = await onRequestPost({
 			request: createRequest(createPng()),
-			env: { AI: createAI({ answer: '' }) },
+			env,
 		});
 		expect(emptyResponse.status).toBe(502);
 		await expect(emptyResponse.json()).resolves.toMatchObject({
-			error: { code: 'INVALID_VISION_RESPONSE' },
+			error: { code: 'INVALID_VISION_RESPONSE', retryable: true },
 		});
 
-		const ai: WorkersAIBinding = {
-			run: vi.fn().mockRejectedValue(new Error('SECRET_PROVIDER_STACK')),
-		};
+		fetchMock.mockRejectedValueOnce(new Error('SECRET_PROVIDER_STACK'));
 		const failedResponse = await onRequestPost({
 			request: createRequest(createPng('SECRET_IMAGE_MARKER.png')),
-			env: { AI: ai },
+			env,
 		});
 		const body = await failedResponse.text();
-		expect(failedResponse.status).toBe(502);
-		expect(body).toContain('VISION_ANALYSIS_FAILED');
+		expect(failedResponse.status).toBe(503);
+		expect(body).toContain('VISION_SERVICE_UNAVAILABLE');
 		expect(body).not.toContain('SECRET_PROVIDER_STACK');
 		expect(body).not.toContain('SECRET_IMAGE_MARKER');
-		expect(String(vi.mocked(console.info).mock.calls)).not.toContain(
-			'SECRET_IMAGE_MARKER',
-		);
+		expect(body).not.toContain('SECRET_SERVER_KEY');
+		const logs = String(vi.mocked(console.info).mock.calls);
+		expect(logs).not.toContain('SECRET_IMAGE_MARKER');
+		expect(logs).not.toContain('SECRET_SERVER_KEY');
+		expect(logs).not.toContain('base64');
 	});
 
-	it('times out a stalled vision binding with a retryable sanitized error', async () => {
+	it('times out a stalled Qwen request with a retryable sanitized error', async () => {
 		vi.useFakeTimers();
-		const ai: WorkersAIBinding = {
-			run: vi.fn().mockReturnValue(new Promise<unknown>(() => undefined)),
-		};
+		fetchMock.mockImplementationOnce((_input, init) =>
+			new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener(
+					'abort',
+					() => reject(new DOMException('Aborted', 'AbortError')),
+					{ once: true },
+				);
+			}),
+		);
 		const pending = onRequestPost({
 			request: createRequest(createPng('SECRET_TIMEOUT_IMAGE.png')),
-			env: { AI: ai },
+			env,
 		});
-		for (let index = 0; index < 20 && !vi.mocked(ai.run).mock.calls.length; index += 1) {
+		for (
+			let index = 0;
+			index < 20 && fetchMock.mock.calls.length === 0;
+			index += 1
+		) {
 			await vi.advanceTimersByTimeAsync(0);
 		}
-		expect(ai.run).toHaveBeenCalledOnce();
+		expect(fetchMock).toHaveBeenCalledOnce();
 
 		await vi.advanceTimersByTimeAsync(VISION_TIMEOUT_MS);
 		const response = await pending;
@@ -221,19 +278,31 @@ describe('POST /api/vision/analyze', () => {
 		expect(body).not.toContain('SECRET_TIMEOUT_IMAGE');
 	});
 
-	it('links client cancellation to a stalled vision binding', async () => {
-		const ai: WorkersAIBinding = {
-			run: vi.fn().mockReturnValue(new Promise<unknown>(() => undefined)),
-		};
+	it('links client cancellation to the Qwen request', async () => {
+		let rejectUpstream: ((reason: unknown) => void) | undefined;
+		fetchMock.mockImplementationOnce(
+			() =>
+				new Promise<Response>((_resolve, reject) => {
+					rejectUpstream = reject;
+				}),
+		);
 		const controller = new AbortController();
 		const pending = onRequestPost({
 			request: createRequest(createPng(), undefined, controller.signal),
-			env: { AI: ai },
+			env,
 		});
-		for (let index = 0; index < 20 && !vi.mocked(ai.run).mock.calls.length; index += 1) {
-			await Promise.resolve();
+		for (
+			let index = 0;
+			index < 50 && fetchMock.mock.calls.length === 0;
+			index += 1
+		) {
+			await new Promise(resolve => setTimeout(resolve, 0));
 		}
+		expect(fetchMock).toHaveBeenCalledOnce();
 		controller.abort();
+		await Promise.resolve();
+		expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+		rejectUpstream?.(new DOMException('Aborted', 'AbortError'));
 
 		const response = await pending;
 		expect(response.status).toBe(499);
