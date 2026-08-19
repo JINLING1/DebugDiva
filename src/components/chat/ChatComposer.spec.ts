@@ -105,6 +105,18 @@ describe('ChatComposer', () => {
 		expect(wrapper.emitted('send')).toEqual([[text]]);
 	});
 
+	it('uses a centered empty state and switches to the in-flow dialog state', async () => {
+		const wrapper = renderComposer();
+		expect(wrapper.get('.composer-layer').classes()).toContain('collapsed');
+
+		await wrapper.get('textarea').trigger('click');
+		expect(wrapper.get('.composer-layer').classes()).toContain('expanded');
+
+		await wrapper.setProps({ hasMessages: true });
+		expect(wrapper.get('.composer-layer').classes()).toContain('dialog');
+		expect(wrapper.get('.chat-composer').classes()).toContain('dialog');
+	});
+
 	it('only emits files through its public event', async () => {
 		const wrapper = renderComposer({ attachmentsDisabled: false });
 		const input = wrapper.get('input[type="file"]');
@@ -209,6 +221,23 @@ describe('ChatComposer', () => {
 
 		expect(wrapper.emitted('retryAttachment')).toEqual([['failed']]);
 		expect(wrapper.emitted('removeAttachment')).toEqual([['failed']]);
+	});
+
+	it('keeps three attachments and an eight-line prompt sendable together', async () => {
+		const wrapper = renderComposer({
+			hasMessages: true,
+			attachments: [
+				createAttachment('one'),
+				createAttachment('two'),
+				createAttachment('three'),
+			],
+		});
+		const prompt = Array.from({ length: 8 }, (_, index) => `第 ${index + 1} 行`).join('\n');
+		await wrapper.get('textarea').setValue(prompt);
+
+		expect(wrapper.findAll('.attachment-card')).toHaveLength(3);
+		await wrapper.get('[aria-label="发送消息"]').trigger('click');
+		expect(wrapper.emitted('send')).toEqual([[prompt]]);
 	});
 
 	it('forwards only a supported model mode', async () => {

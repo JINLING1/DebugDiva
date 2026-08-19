@@ -38,5 +38,7 @@ const emit = defineEmits<{
 	max-height: 210px;
 	padding: 2px 2px 8px;
 	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--dd-border-strong) transparent;
 }
 </style>

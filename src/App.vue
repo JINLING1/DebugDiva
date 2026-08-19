@@ -1,134 +1,161 @@
 <template>
-  <!--应用外壳：历史侧栏、顶部导航和可复用聊天窗口-->
-  <el-container class="main-container">
-    <!-- 移动端侧边栏遮罩 -->
-    <div v-show="isMobile && isSidebarOpen" class="sidebar-overlay" @click="isSidebarOpen = false"></div>
+  <el-container class="app-shell">
+    <Transition name="overlay-fade">
+      <button
+        v-if="isMobile && isSidebarOpen"
+        class="sidebar-overlay"
+        type="button"
+        aria-label="关闭侧栏"
+        @click="isSidebarOpen = false"
+      ></button>
+    </Transition>
 
-    <el-aside :class="{ 'is-collapsed': !isSidebarOpen, 'is-mobile': isMobile }">
-      <History></History>
+    <el-aside
+      class="app-sidebar"
+      :class="{ 'is-collapsed': !isSidebarOpen, 'is-mobile': isMobile }"
+    >
+      <History />
     </el-aside>
-    <el-container class="right-container">
-      <el-header>
-        <Nav></Nav>
+
+    <el-container class="app-content">
+      <el-header class="app-header">
+        <Nav />
       </el-header>
-      <el-main>
+      <el-main class="app-main">
         <ChatView />
       </el-main>
     </el-container>
   </el-container>
 </template>
 
-
 <script lang="ts" setup>
-import "highlight.js/styles/default.css"; // 引入默认的高亮样式
-import { ref, onMounted, onUnmounted } from 'vue';
+import 'highlight.js/styles/default.css';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { storeToRefs } from 'pinia';
-import Nav from "./components/Nav.vue";
-import History from "./features/history/History.vue";
-import ChatView from "./features/chat/ChatView.vue";
+import Nav from './components/Nav.vue';
+import History from './features/history/History.vue';
+import ChatView from './features/chat/ChatView.vue';
 import { useChatStore } from './store/chat';
 
+const MOBILE_BREAKPOINT = '(max-width: 768px)';
 const chatStore = useChatStore();
 const { isSidebarOpen } = storeToRefs(chatStore);
+const mobileQuery = window.matchMedia(MOBILE_BREAKPOINT);
+const isMobile = ref(mobileQuery.matches);
 
-const isMobile = ref(window.innerWidth <= 768);
+isSidebarOpen.value = !isMobile.value;
 
-//防抖函数，限制 resize 事件的触发频率
-function debounce(fn: Function, delay: number) {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return function (this: any, ...args: any[]) {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      fn.apply(this, args);
-    }, delay);
-  };
+function handleBreakpointChange(event: MediaQueryListEvent) {
+  isMobile.value = event.matches;
+  isSidebarOpen.value = !event.matches;
 }
 
-const handleResize = debounce(() => {
-  const currentIsMobile = window.innerWidth <= 768;
-  if (currentIsMobile !== isMobile.value) {
-    isMobile.value = currentIsMobile;
-    isSidebarOpen.value = !currentIsMobile;
-  }
-}, 100);
-
 onMounted(() => {
-  window.addEventListener('resize', handleResize);
+  mobileQuery.addEventListener('change', handleBreakpointChange);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
+  mobileQuery.removeEventListener('change', handleBreakpointChange);
 });
-
 </script>
 
+<style scoped>
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--dd-bg);
+  color: var(--dd-text);
+}
 
-<style>
-body {
-  margin: 0;
+.app-sidebar {
+  width: var(--dd-sidebar-width);
+  min-width: var(--dd-sidebar-width);
+  height: 100%;
+  overflow: hidden;
+  background: var(--dd-sidebar);
+  border-right: 1px solid var(--dd-border);
+  transition:
+    width 180ms ease,
+    min-width 180ms ease,
+    transform 220ms ease;
+}
+
+.app-sidebar.is-collapsed:not(.is-mobile) {
+  width: 0;
+  min-width: 0;
+  border-right-width: 0;
+}
+
+.app-content {
+  min-width: 0;
+  height: 100%;
+  background: var(--dd-bg);
+}
+
+.app-header {
+  flex: 0 0 var(--dd-header-height);
+  height: var(--dd-header-height);
+  padding: 0 16px;
+  background: var(--dd-bg);
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
 
-.main-container {
-  height: 100vh;
-  height: 100dvh;
-  width: 100vw;
-  display: flex;
-  background-color: var(--el-bg-color);
-  color: var(--el-text-color-primary);
-}
-
-.right-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  position: relative;
-}
-
-.el-aside {
-  width: 260px;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  background-color: var(--el-bg-color-page);
-  overflow: hidden !important;
-}
-
-.el-aside.is-mobile {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 1001;
-  height: 100vh;
-  height: 100dvh;
-}
-
 .sidebar-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  position: fixed;
+  inset: 0;
   z-index: 1000;
-  backdrop-filter: blur(2px);
-  transition: opacity 0.3s ease;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(1px);
 }
 
-.el-aside.is-collapsed {
-  width: 0 !important;
+.overlay-fade-enter-active,
+.overlay-fade-leave-active {
+  transition: opacity 180ms ease;
 }
 
-.el-header {
-  height: 50px;
+.overlay-fade-enter-from,
+.overlay-fade-leave-to {
+  opacity: 0;
 }
 
-.el-main {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden !important;
-  padding: 0px !important;
+@media (max-width: 768px) {
+  .app-sidebar.is-mobile {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1001;
+    width: min(86vw, 320px);
+    min-width: min(86vw, 320px);
+    border-right: 1px solid var(--dd-border);
+    box-shadow: var(--dd-shadow);
+  }
+
+  .app-sidebar.is-mobile.is-collapsed {
+    transform: translateX(-102%);
+    pointer-events: none;
+  }
+
+  .app-header {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header {
+    padding: 0 4px;
+  }
 }
 </style>

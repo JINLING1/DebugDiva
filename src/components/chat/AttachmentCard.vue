@@ -151,14 +151,14 @@ const formatFileSize = (size: number) => {
 	align-items: flex-start;
 	gap: 10px;
 	padding: 9px 10px;
-	border: 1px solid var(--el-border-color-light);
-	border-radius: 10px;
-	background: var(--el-fill-color-lighter);
+	border: 1px solid var(--dd-border);
+	border-radius: var(--dd-radius-md);
+	background: var(--dd-surface-muted);
 }
 
 .attachment-card.is-error {
-	border-color: var(--el-color-danger-light-7);
-	background: var(--el-color-danger-light-9);
+	border-color: color-mix(in srgb, var(--dd-danger) 32%, var(--dd-border));
+	background: var(--dd-danger-soft);
 }
 
 .file-icon {
@@ -176,7 +176,7 @@ const formatFileSize = (size: number) => {
 	justify-content: center;
 	overflow: hidden;
 	border-radius: 8px;
-	background: var(--el-fill-color);
+	background: var(--dd-surface-hover);
 }
 
 .image-thumbnail img {
@@ -204,7 +204,7 @@ const formatFileSize = (size: number) => {
 .attachment-name {
 	min-width: 0;
 	overflow: hidden;
-	color: var(--el-text-color-primary);
+	color: var(--dd-text);
 	font-size: 13px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -215,7 +215,7 @@ const formatFileSize = (size: number) => {
 	flex: 0 0 auto;
 	align-items: center;
 	gap: 4px;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	font-size: 11px;
 }
 
@@ -224,14 +224,14 @@ const formatFileSize = (size: number) => {
 }
 
 .status-label[data-status='error'] {
-	color: var(--el-color-danger);
+	color: var(--dd-danger);
 }
 
 .status-spinner {
 	width: 10px;
 	height: 10px;
-	border: 1.5px solid var(--el-border-color);
-	border-top-color: var(--el-color-primary);
+	border: 1.5px solid var(--dd-border-strong);
+	border-top-color: var(--dd-accent);
 	border-radius: 50%;
 	animation: attachment-spin 0.8s linear infinite;
 }
@@ -239,19 +239,19 @@ const formatFileSize = (size: number) => {
 .attachment-meta {
 	gap: 8px;
 	margin: 3px 0 0;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	font-size: 11px;
 }
 
 .attachment-error {
 	margin: 5px 0 0;
-	color: var(--el-color-danger);
+	color: var(--dd-danger);
 	font-size: 12px;
 }
 
 .attachment-warnings {
 	margin-top: 5px;
-	color: var(--el-color-warning-dark-2);
+	color: var(--dd-warning);
 	font-size: 11px;
 }
 
@@ -264,7 +264,7 @@ const formatFileSize = (size: number) => {
 	display: inline-block;
 	padding: 1px 5px;
 	border-radius: 4px;
-	background: var(--el-color-warning-light-8);
+	background: color-mix(in srgb, var(--dd-warning) 16%, transparent);
 }
 
 .attachment-actions {
@@ -276,7 +276,7 @@ const formatFileSize = (size: number) => {
 	padding: 3px 5px;
 	font: inherit;
 	font-size: 11px;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	cursor: pointer;
 	background: transparent;
 	border: 0;
@@ -284,8 +284,8 @@ const formatFileSize = (size: number) => {
 }
 
 .attachment-action:hover:not(:disabled) {
-	color: var(--el-color-primary);
-	background: var(--el-fill-color);
+	color: var(--dd-text);
+	background: var(--dd-surface-hover);
 }
 
 .attachment-action:disabled {
@@ -294,11 +294,27 @@ const formatFileSize = (size: number) => {
 }
 
 .retry-action {
-	color: var(--el-color-primary);
+	color: var(--dd-accent);
 }
 
 .remove-action:hover:not(:disabled) {
-	color: var(--el-color-danger);
+	color: var(--dd-danger);
+}
+
+@media (max-width: 480px) {
+	.attachment-card {
+		flex-wrap: wrap;
+	}
+
+	.attachment-actions {
+		width: 100%;
+		justify-content: flex-end;
+	}
+
+	.attachment-action {
+		min-width: 40px;
+		min-height: 32px;
+	}
 }
 
 @keyframes attachment-spin {

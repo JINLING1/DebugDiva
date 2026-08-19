@@ -1,14 +1,12 @@
 <template>
-	<section class="message-list" aria-label="消息列表">
+	<section ref="listRef" class="message-list" aria-label="消息列表">
 		<div v-if="messages.length === 0" class="welcome-wrapper">
 			<div class="welcome-message">
-				<div class="avatar-container">
+				<div class="welcome-avatar">
 					<img src="/robot.svg" alt="Assistant Avatar" class="avatar" />
 				</div>
-				<p>
-					<strong>我是 DebugDiva！你的智能助理，很高兴见到你！</strong><br />
-					<span class="small-text">我可以帮你调试代码、分析问题并给出建议。</span>
-				</p>
+				<h1>有什么可以帮忙的？</h1>
+				<p>我可以帮你调试代码、分析问题并给出建议。</p>
 			</div>
 		</div>
 
@@ -19,6 +17,7 @@
 			:items="messages"
 			:min-item-size="80"
 			key-field="id"
+			@scroll="handleScroll"
 		>
 			<template #default="{ item, index, active }">
 				<DynamicScrollerItem
@@ -42,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import MessageItem from './MessageItem.vue';
 import type { ChatMessage } from '../../types/chat';
@@ -69,7 +68,10 @@ type ScrollerHandle = {
 };
 
 const scrollerRef = ref<ScrollerHandle | null>(null);
+const listRef = ref<HTMLElement | null>(null);
+const pinnedToBottom = ref(true);
 let scrollTimeouts: number[] = [];
+let resizeObserver: ResizeObserver | null = null;
 
 const messageSignature = (message: ChatMessage) =>
 	`${message.status}:${getMessageText(message).length}:${message.contents.length}`;
@@ -84,26 +86,52 @@ const doScrollToBottom = () => {
 	if (scroller.$el) scroller.$el.scrollTop = scroller.$el.scrollHeight;
 };
 
-const scheduleScrollToBottom = () => {
+const getScrollerElement = () => scrollerRef.value?.$el ?? null;
+
+const handleScroll = () => {
+	const element = getScrollerElement();
+	if (!element) return;
+	const distanceToBottom =
+		element.scrollHeight - element.scrollTop - element.clientHeight;
+	pinnedToBottom.value = distanceToBottom <= 96;
+};
+
+const scheduleScrollToBottom = (force = false) => {
+	if (!force && !pinnedToBottom.value) return;
 	scrollTimeouts.forEach(window.clearTimeout);
 	scrollTimeouts = [];
 
 	nextTick(() => {
 		doScrollToBottom();
 		[50, 150, 300].forEach(delay => {
-			scrollTimeouts.push(window.setTimeout(doScrollToBottom, delay));
+			scrollTimeouts.push(
+				window.setTimeout(() => {
+					if (pinnedToBottom.value) doScrollToBottom();
+				}, delay),
+			);
 		});
 	});
 };
 
 watch(
 	() => props.messages.map(message => `${message.id}:${messageSignature(message)}`),
-	scheduleScrollToBottom,
+	(current, previous = []) => {
+		scheduleScrollToBottom(current.length > previous.length);
+	},
 	{ deep: true },
 );
 
+onMounted(() => {
+	if (!listRef.value || typeof ResizeObserver === 'undefined') return;
+	resizeObserver = new ResizeObserver(() => {
+		if (pinnedToBottom.value) scheduleScrollToBottom();
+	});
+	resizeObserver.observe(listRef.value);
+});
+
 onBeforeUnmount(() => {
 	scrollTimeouts.forEach(window.clearTimeout);
+	resizeObserver?.disconnect();
 });
 </script>
 
@@ -115,49 +143,63 @@ onBeforeUnmount(() => {
 	width: 100%;
 	height: 100%;
 	min-height: 0;
-	padding-bottom: 130px;
 	box-sizing: border-box;
 	overflow: hidden;
+	background: var(--dd-bg);
 }
 
 .welcome-wrapper {
 	display: flex;
+	align-items: center;
 	justify-content: center;
 	width: 100%;
-	height: 50%;
+	height: 100%;
+	padding: 24px 20px 190px;
 }
 
 .welcome-message {
 	display: flex;
+	max-width: var(--dd-content-width);
+	flex-direction: column;
 	align-items: center;
-	padding: 15px;
-	margin-bottom: 15px;
-	font-size: 30px;
-	color: var(--el-text-color-primary);
-	text-align: left;
-	border-radius: 8px;
+	color: var(--dd-text);
+	text-align: center;
 }
 
-.avatar-container {
-	width: 40px;
-	height: 40px;
-	margin: 10px;
-	flex-shrink: 0;
+.welcome-avatar {
+	display: grid;
+	width: 48px;
+	height: 48px;
+	place-items: center;
+	margin-bottom: 18px;
+	border: 1px solid var(--dd-border);
+	border-radius: 50%;
+	background: var(--dd-surface-muted);
 }
 
 .avatar {
-	width: 30px;
-	height: 30px;
+	width: 32px;
+	height: 32px;
 }
 
-.small-text {
-	font-size: 18px;
-	color: var(--el-text-color-secondary);
+.welcome-message h1 {
+	margin: 0;
+	font-size: clamp(24px, 3vw, 30px);
+	font-weight: 600;
+	letter-spacing: -0.03em;
+}
+
+.welcome-message p {
+	margin: 8px 0 0;
+	color: var(--dd-text-secondary);
+	font-size: 15px;
 }
 
 .scroller {
 	flex: 1;
 	min-height: 0;
+	overflow-x: hidden;
+	scrollbar-gutter: stable;
 }
 
 .scroller::-webkit-scrollbar {
@@ -174,24 +216,31 @@ onBeforeUnmount(() => {
 }
 
 .scroller::-webkit-scrollbar-thumb {
-	background: #d2d3d6;
+	background: var(--dd-border-strong);
 	border-radius: 4px;
 }
 
 .scroller::-webkit-scrollbar-thumb:hover {
-	background: #a9adb4;
+	background: var(--dd-text-tertiary);
 }
 
 @media (max-width: 768px) {
-	.welcome-message {
-		flex-direction: column;
-		padding: 10px;
-		font-size: 20px;
-		text-align: center;
+	.welcome-wrapper {
+		padding: 16px 16px 170px;
 	}
 
-	.small-text {
+	.welcome-message p {
 		font-size: 14px;
+	}
+}
+
+@media (max-width: 480px) {
+	.welcome-wrapper {
+		padding-bottom: 150px;
+	}
+
+	.welcome-message h1 {
+		font-size: 22px;
 	}
 }
 </style>

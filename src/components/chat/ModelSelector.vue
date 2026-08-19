@@ -49,12 +49,13 @@ const handleChange = (event: Event) => {
 
 .mode-select {
 	max-width: 112px;
-	padding: 5px 24px 5px 8px;
+	min-height: 36px;
+	padding: 6px 24px 6px 10px;
 	font: inherit;
 	font-size: 13px;
-	color: var(--el-text-color-regular);
+	color: var(--dd-text-secondary);
 	cursor: pointer;
-	background: var(--el-fill-color-light);
+	background: transparent;
 	border: 1px solid transparent;
 	border-radius: 8px;
 	outline: none;
@@ -62,7 +63,9 @@ const handleChange = (event: Event) => {
 
 .mode-select:hover,
 .mode-select:focus-visible {
-	border-color: var(--el-color-primary-light-5);
+	color: var(--dd-text);
+	background: var(--dd-surface-hover);
+	border-color: var(--dd-border);
 }
 
 .mode-select:disabled {

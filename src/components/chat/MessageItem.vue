@@ -149,9 +149,9 @@ const showActions = computed(
 	display: flex;
 	box-sizing: border-box;
 	width: 100%;
-	max-width: 800px;
+	max-width: var(--dd-content-width);
 	margin: 0 auto;
-	padding: 0 0 30px;
+	padding: 12px 16px 28px;
 }
 
 .message-item--user,
@@ -160,15 +160,20 @@ const showActions = computed(
 }
 
 .avatar-container {
-	width: 40px;
-	height: 40px;
-	margin: 10px;
+	display: grid;
+	width: 32px;
+	height: 32px;
+	place-items: center;
+	margin: 6px 12px 0 0;
 	flex-shrink: 0;
+	border: 1px solid var(--dd-border);
+	border-radius: 50%;
+	background: var(--dd-surface-muted);
 }
 
 .avatar {
-	width: 30px;
-	height: 30px;
+	width: 22px;
+	height: 22px;
 }
 
 .message-body {
@@ -179,7 +184,7 @@ const showActions = computed(
 }
 
 .message-item--user .message-body {
-	max-width: 85%;
+	max-width: 80%;
 }
 
 .message-contents {
@@ -194,7 +199,7 @@ const showActions = computed(
 	width: fit-content;
 	align-items: center;
 	gap: 6px;
-	margin: 6px 20px 8px;
+	margin: 8px 0 4px;
 	padding: 3px 8px;
 	border: 1px solid transparent;
 	border-radius: 999px;
@@ -203,15 +208,15 @@ const showActions = computed(
 }
 
 .stopped-status {
-	border-color: var(--el-border-color-light);
-	background: var(--el-fill-color-light);
-	color: var(--el-text-color-secondary);
+	border-color: var(--dd-border);
+	background: var(--dd-surface-muted);
+	color: var(--dd-text-secondary);
 }
 
 .error-status {
-	border-color: var(--el-color-danger-light-7);
-	background: var(--el-color-danger-light-9);
-	color: var(--el-color-danger);
+	border-color: color-mix(in srgb, var(--dd-danger) 32%, var(--dd-border));
+	background: var(--dd-danger-soft);
+	color: var(--dd-danger);
 }
 
 .status-dot {
@@ -224,7 +229,7 @@ const showActions = computed(
 .message-actions {
 	position: absolute;
 	bottom: 2px;
-	left: 20px;
+	left: 0;
 	display: flex;
 	gap: 4px;
 	opacity: 0;
@@ -240,22 +245,22 @@ const showActions = computed(
 
 .action-button {
 	display: inline-flex;
-	width: 28px;
-	height: 28px;
+	width: 32px;
+	height: 32px;
 	align-items: center;
 	justify-content: center;
 	padding: 5px;
 	border: 0;
-	border-radius: 6px;
+	border-radius: var(--dd-radius-sm);
 	background: transparent;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-tertiary);
 	cursor: pointer;
 }
 
 .action-button:hover,
 .action-button:focus-visible {
-	background: var(--el-fill-color-light);
-	color: var(--el-color-primary);
+	background: var(--dd-surface-hover);
+	color: var(--dd-text);
 	outline: none;
 }
 
@@ -273,23 +278,48 @@ const showActions = computed(
 .loading-spinner {
 	width: 15px;
 	height: 15px;
-	margin: 20px 0 5px 20px;
-	border: 2px solid #f3f3f3;
-	border-top-color: gray;
+	margin: 16px 0 5px;
+	border: 2px solid var(--dd-border);
+	border-top-color: var(--dd-text-secondary);
 	border-radius: 50%;
 	animation: spin 1s linear infinite;
 }
 
 @media (max-width: 768px) {
 	.message-item {
+		padding: 10px 12px 26px;
+	}
+
+	.message-actions {
+		opacity: 1;
+		visibility: visible;
+	}
+
+	.action-button {
+		width: 40px;
+		height: 40px;
+	}
+}
+
+@media (max-width: 480px) {
+	.message-item {
 		padding-right: 10px;
 		padding-left: 10px;
 	}
 
-	.message-actions {
-		left: 0;
-		opacity: 1;
-		visibility: visible;
+	.message-item--user .message-body {
+		max-width: 92%;
+	}
+
+	.avatar-container {
+		width: 28px;
+		height: 28px;
+		margin-right: 8px;
+	}
+
+	.avatar {
+		width: 20px;
+		height: 20px;
 	}
 }
 </style>

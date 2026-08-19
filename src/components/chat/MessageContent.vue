@@ -110,7 +110,7 @@ const formatFileSize = (size: number) => {
 .citation-content,
 .image-content {
 	box-sizing: border-box;
-	max-width: min(100%, 560px);
+	max-width: min(100%, 640px);
 }
 
 .content-card {
@@ -118,9 +118,9 @@ const formatFileSize = (size: number) => {
 	gap: 10px;
 	align-items: center;
 	padding: 10px 12px;
-	border: 1px solid var(--el-border-color-light);
-	border-radius: 10px;
-	background: var(--el-fill-color-lighter);
+	border: 1px solid var(--dd-border);
+	border-radius: var(--dd-radius-md);
+	background: var(--dd-surface-muted);
 }
 
 .content-icon {
@@ -137,13 +137,13 @@ const formatFileSize = (size: number) => {
 
 .content-title {
 	overflow: hidden;
-	color: var(--el-text-color-primary);
+	color: var(--dd-text);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .content-meta {
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	font-size: 12px;
 }
 
@@ -156,12 +156,15 @@ const formatFileSize = (size: number) => {
 .image-placeholder {
 	display: block;
 	max-width: 100%;
-	border-radius: 8px;
+	overflow: hidden;
+	border-radius: var(--dd-radius-md);
 }
 
 .image-preview {
 	width: auto;
 	max-height: 360px;
+	border: 1px solid var(--dd-border);
+	background: var(--dd-surface-muted);
 }
 
 .image-preview :deep(img) {
@@ -178,21 +181,23 @@ const formatFileSize = (size: number) => {
 	align-items: center;
 	justify-content: center;
 	gap: 8px;
-	border: 1px dashed var(--el-border-color);
-	background: var(--el-fill-color-light);
-	color: var(--el-text-color-secondary);
+	border: 1px dashed var(--dd-border-strong);
+	background: var(--dd-surface-muted);
+	color: var(--dd-text-secondary);
 }
 
 .image-content figcaption {
 	margin-top: 5px;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	font-size: 12px;
 }
 
 .citation-content {
 	padding: 10px 12px;
-	border-left: 3px solid var(--el-color-primary-light-5);
-	background: var(--el-fill-color-lighter);
+	border: 1px solid var(--dd-border);
+	border-left: 3px solid var(--dd-accent);
+	border-radius: 0 var(--dd-radius-md) var(--dd-radius-md) 0;
+	background: var(--dd-surface-muted);
 }
 
 .citation-header {
@@ -200,14 +205,25 @@ const formatFileSize = (size: number) => {
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px;
-	color: var(--el-text-color-regular);
+	color: var(--dd-text-secondary);
 	font-size: 12px;
 }
 
 .citation-content blockquote {
 	margin: 7px 0 0;
-	color: var(--el-text-color-secondary);
+	color: var(--dd-text-secondary);
 	font-size: 13px;
 	line-height: 1.6;
+}
+
+@media (max-width: 480px) {
+	.image-preview,
+	.image-preview :deep(img) {
+		max-height: 280px;
+	}
+
+	.image-placeholder {
+		min-width: min(220px, 100%);
+	}
 }
 </style>

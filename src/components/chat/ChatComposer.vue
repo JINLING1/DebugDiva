@@ -1,5 +1,5 @@
 <template>
-	<div class="composer-layer">
+	<div class="composer-layer" :class="dialogState">
 		<transition name="chat-transition">
 			<div class="chat-composer" :class="dialogState">
 				<div class="input-wrapper">
@@ -17,7 +17,7 @@
 							:autosize="{ minRows: 1, maxRows: 8 }"
 							type="textarea"
 							resize="none"
-							placeholder="Ask me everything... (Press Shift+Enter to newline, max 1000 words)"
+							placeholder="给 DebugDiva 发送消息"
 							maxlength="1000"
 							aria-label="聊天输入框"
 							@keydown.enter="handleKeySubmit"
@@ -322,7 +322,7 @@ const handleFileSelection = (event: Event) => {
 
 .custom-input-container:focus-within {
 	border-color: var(--el-color-primary);
-	box-shadow: 0 -4px 18px rgb(64 158 255 / 12%);
+	box-shadow: 0 -4px 18px color-mix(in srgb, var(--dd-accent) 12%, transparent);
 }
 
 :deep(.inner-input .el-textarea__inner) {
@@ -433,6 +433,220 @@ const handleFileSelection = (event: Event) => {
 @media (max-width: 768px) {
 	.chat-composer {
 		width: 95%;
+	}
+}
+
+.composer-layer {
+	z-index: 10;
+}
+
+.composer-layer.dialog {
+	position: relative;
+	inset: auto;
+	display: flex;
+	max-height: 460px;
+	justify-content: center;
+	padding: 8px 16px max(16px, env(safe-area-inset-bottom));
+	pointer-events: auto;
+	background: var(--dd-bg);
+}
+
+.chat-composer {
+	width: calc(100% - 32px);
+	max-width: var(--dd-content-width);
+}
+
+.composer-layer.dialog .chat-composer {
+	position: relative;
+	bottom: auto;
+	left: auto;
+	display: flex;
+	width: 100%;
+	max-height: 436px;
+	flex-direction: column;
+	transform: none;
+}
+
+.chat-composer.collapsed {
+	top: 58%;
+}
+
+.chat-composer.expanded {
+	top: 52%;
+	transform: translate(-50%, -50%);
+}
+
+.input-wrapper {
+	min-height: 0;
+	margin-bottom: 0;
+}
+
+.custom-input-container {
+	min-height: 0;
+	padding: 10px 12px 9px;
+	overflow: hidden;
+	background: var(--dd-surface);
+	border-color: var(--dd-border-strong);
+	border-radius: 24px;
+	box-shadow: 0 2px 10px rgb(0 0 0 / 8%);
+}
+
+.custom-input-container:focus-within {
+	border-color: var(--dd-border-strong);
+	box-shadow:
+		0 0 0 1px var(--dd-accent),
+		0 4px 18px rgb(0 0 0 / 8%);
+}
+
+:deep(.attachment-list) {
+	min-height: 0;
+	max-height: 180px;
+	flex-shrink: 1;
+	overscroll-behavior: contain;
+}
+
+:deep(.inner-input .el-textarea__inner) {
+	max-height: 12rem;
+	padding: 4px 6px;
+	overflow-y: auto;
+	color: var(--dd-text);
+	font-size: 16px;
+	line-height: 1.5;
+	scrollbar-width: thin;
+}
+
+:deep(.inner-input .el-textarea__inner::placeholder) {
+	color: var(--dd-text-tertiary);
+}
+
+.input-action-bar {
+	min-height: 40px;
+	margin-top: 4px;
+}
+
+.action-btn {
+	width: 40px;
+	height: 40px;
+	color: var(--dd-text-secondary);
+}
+
+.action-btn:hover:not(.is-disabled) {
+	background: var(--dd-surface-hover);
+	color: var(--dd-text);
+}
+
+.word-count {
+	color: var(--dd-text-tertiary);
+}
+
+.send-btn.custom-transparent-btn {
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	margin-left: 0;
+	border-radius: 50%;
+	background: var(--dd-accent) !important;
+	color: #ffffff !important;
+}
+
+.send-btn.custom-transparent-btn:hover:not(.is-disabled) {
+	background: var(--dd-accent-hover) !important;
+	transform: scale(1.03);
+}
+
+.send-btn.custom-transparent-btn.is-disabled {
+	background: var(--dd-surface-hover) !important;
+	color: var(--dd-text-tertiary) !important;
+}
+
+.send-btn.custom-transparent-btn.light-button {
+	background: var(--dd-text) !important;
+	color: var(--dd-bg) !important;
+	opacity: 1;
+}
+
+.suggestions {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.suggestion-item {
+	min-height: 48px;
+	padding: 10px 12px;
+	color: var(--dd-text-secondary);
+	text-align: left;
+	background: var(--dd-surface);
+	border: 1px solid var(--dd-border);
+	border-radius: var(--dd-radius-md);
+}
+
+.suggestion-item:hover {
+	color: var(--dd-text);
+	background: var(--dd-surface-hover);
+	border-color: var(--dd-border-strong);
+	transform: none;
+}
+
+@media (max-width: 1023px) {
+	.composer-layer.dialog {
+		padding-right: 20px;
+		padding-left: 20px;
+	}
+}
+
+@media (max-width: 768px) {
+	.composer-layer.dialog {
+		max-height: 45dvh;
+		padding: 6px 10px max(10px, env(safe-area-inset-bottom));
+	}
+
+	.composer-layer.dialog .chat-composer {
+		width: 100%;
+		max-height: calc(45dvh - max(16px, env(safe-area-inset-bottom)));
+	}
+
+	.chat-composer {
+		width: calc(100% - 20px);
+	}
+
+	.chat-composer.collapsed {
+		top: 60%;
+	}
+
+	.custom-input-container {
+		padding: 8px 10px 7px;
+		border-radius: 20px;
+	}
+
+	:deep(.attachment-list) {
+		max-height: 12dvh;
+	}
+
+	:deep(.inner-input .el-textarea__inner) {
+		max-height: 18dvh;
+		font-size: 16px;
+	}
+
+	.suggestions {
+		grid-template-columns: 1fr;
+		max-height: 160px;
+		overflow-y: auto;
+	}
+}
+
+@media (max-width: 480px) {
+	.action-right {
+		gap: 6px;
+	}
+
+	.word-count {
+		display: none;
+	}
+
+	.suggestion-item {
+		min-height: 44px;
+		font-size: 13px;
 	}
 }
 </style>

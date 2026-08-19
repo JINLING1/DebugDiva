@@ -65,11 +65,13 @@ const emit = defineEmits<{
 <style scoped>
 .chat-window {
 	position: relative;
-	display: flex;
+	display: grid;
+	grid-template-rows: minmax(0, 1fr) auto;
 	flex: 1;
 	width: 100%;
 	height: 100%;
 	min-height: 0;
 	overflow: hidden;
+	background: var(--dd-bg);
 }
 </style>

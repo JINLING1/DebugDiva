@@ -6,12 +6,12 @@
         <Fold v-else />
       </el-icon>
     </el-button>
-    <p class="title">Chat with DebugDiva</p>
+    <p class="title">DebugDiva</p>
 
     <div class="spacer"></div>
 
     <el-button text class="theme-toggle-btn" @click="toggleDark">
-      <el-icon :size="30">
+      <el-icon :size="20">
         <Sunny v-if="!isDark" />
         <Moon v-else />
       </el-icon>
@@ -73,7 +73,7 @@ onMounted(() => {
   align-items: center;
   height: 100%;
   width: 100%;
-  padding: 0 10px;
+  gap: 8px;
 }
 
 .spacer {
@@ -81,25 +81,43 @@ onMounted(() => {
 }
 
 .toggle-btn {
-  margin-right: 15px;
-  color: var(--el-text-color-regular);
+  margin: 0;
+  color: var(--dd-text-secondary);
 }
 
 .theme-toggle-btn {
-  color: var(--el-text-color-regular);
-  margin-right: 0;
+  margin: 0;
+  color: var(--dd-text-secondary);
+}
+
+.toggle-btn,
+.theme-toggle-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
 }
 
 .toggle-btn:hover,
 .theme-toggle-btn:hover {
-  background-color: var(--el-fill-color-light);
+  background-color: var(--dd-surface-hover);
+  color: var(--dd-text);
 }
 
 .title {
-  font-style: italic;
-  font-weight: bold;
-  font-size: 24px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   margin: 0;
-  color: var(--el-text-color-primary);
+  color: var(--dd-text);
+}
+
+@media (max-width: 480px) {
+  .header-block {
+    gap: 4px;
+  }
+
+  .title {
+    font-size: 16px;
+  }
 }
 </style>

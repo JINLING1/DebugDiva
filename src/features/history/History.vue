@@ -1,11 +1,11 @@
 <template>
   <div class="aside-block">
     <div class="new-chat-wrapper">
-      <el-button class="new-chat-btn" type="primary" plain @click="startNewChat">
+      <el-button class="new-chat-btn" @click="startNewChat">
         <el-icon>
           <Plus />
         </el-icon>
-        <span style="margin-left: 5px;">开启新对话</span>
+        <span class="new-chat-label">开启新对话</span>
       </el-button>
     </div>
 
@@ -147,48 +147,64 @@ const handleClearAllLocalData = async () => {
   background-color: transparent;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--el-border-color-light);
   overflow: hidden;
-  box-sizing: border-box
+  box-sizing: border-box;
+  color: var(--dd-text);
 }
 
 .new-chat-wrapper {
-  padding: 15px;
+  padding: 12px 10px 10px;
 }
 
 .new-chat-btn {
   width: 100%;
-  border-radius: 8px;
-  justify-content: center;
-  font-weight: bold;
-  height: 40px;
+  height: 44px;
+  justify-content: flex-start;
+  color: var(--dd-text);
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius-md);
+}
+
+.new-chat-btn:hover,
+.new-chat-btn:focus-visible {
+  color: var(--dd-text);
+  background: var(--dd-surface-hover);
+  border-color: var(--dd-border-strong);
+}
+
+.new-chat-label {
+  margin-left: 7px;
 }
 
 .session-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 10px;
+  padding: 2px 8px 12px;
 }
 
 .session-item {
   display: flex;
   align-items: center;
-  padding: 12px 10px;
-  margin-bottom: 5px;
-  border-radius: 8px;
+  min-height: 44px;
+  padding: 9px 10px;
+  margin-bottom: 3px;
+  border-radius: var(--dd-radius-sm);
   cursor: pointer;
-  color: var(--el-text-color-primary);
+  color: var(--dd-text-secondary);
   transition: background-color 0.2s;
 }
 
 .session-item:hover {
-  background-color: var(--el-fill-color-light);
+  background-color: var(--dd-surface-hover);
+  color: var(--dd-text);
 }
 
 .session-item.active {
-  background-color: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background-color: var(--dd-surface-hover);
+  color: var(--dd-text);
   font-weight: 500;
 }
 
@@ -230,7 +246,10 @@ const handleClearAllLocalData = async () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-radius: 6px;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -238,16 +257,16 @@ const handleClearAllLocalData = async () => {
 
 .action-icon {
   font-size: 16px;
-  color: #909399;
+  color: var(--dd-text-tertiary);
   transition: color 0.2s;
 }
 
 .action-icon:hover {
-  color: #409eff;
+  color: var(--dd-text);
 }
 
 .delete-icon:hover {
-  color: #f56c6c;
+  color: var(--dd-danger);
 }
 
 .session-list::-webkit-scrollbar {
@@ -278,7 +297,7 @@ const handleClearAllLocalData = async () => {
   align-items: center;
   gap: 2px;
   padding: 10px 12px 14px;
-  border-top: 1px solid var(--el-border-color-light);
+  border-top: 1px solid var(--dd-border);
 }
 
 .clear-local-data-btn {
@@ -286,7 +305,7 @@ const handleClearAllLocalData = async () => {
 }
 
 .local-data-hint {
-  color: var(--el-text-color-secondary);
+  color: var(--dd-text-tertiary);
   font-size: 11px;
   line-height: 1.4;
   text-align: center;
@@ -296,6 +315,12 @@ const handleClearAllLocalData = async () => {
   .session-actions {
     display: flex;
     gap: 8px;
+  }
+
+  .action-button,
+  .action-icon {
+    min-width: 40px;
+    min-height: 40px;
   }
 }
 </style>

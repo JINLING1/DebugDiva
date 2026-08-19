@@ -84,14 +84,16 @@ onMounted(() => {
 
 .message-container {
   display: flex;
-  margin-bottom: 10px;
+  margin-bottom: 2px;
   max-width: 100%;
+  min-width: 0;
   flex-direction: column;
 }
 
 /* 使表格宽度占满 */
 :deep(table) {
   width: 100%;
+  min-width: 520px;
   border-collapse: collapse;
   table-layout: auto;
   font-size: 14px;
@@ -101,14 +103,14 @@ onMounted(() => {
 /* 设置表头和单元格的边框、背景色 */
 :deep(th),
 :deep(td) {
-  border: 1px solid #c5e1a5;
+  border: 1px solid var(--dd-border);
   padding: 10px;
   width: fit-content;
 }
 
 :deep(th) {
-  background-color: #d7f1b9;
-  color: #555;
+  background-color: var(--dd-surface-muted);
+  color: var(--dd-text);
   font-weight: bold;
 }
 
@@ -123,11 +125,11 @@ onMounted(() => {
 .user-message {
   margin-left: auto;
   margin-right: 0;
-  max-width: 85%;
-  background-color: var(--el-fill-color-light);
+  max-width: 100%;
+  background-color: var(--dd-surface-muted);
   border: none;
-  border-radius: 10px;
-  padding: 8px 16px;
+  border-radius: var(--dd-radius-lg);
+  padding: 10px 16px;
   width: fit-content;
   text-align: left;
   word-break: break-word;
@@ -144,8 +146,7 @@ onMounted(() => {
   margin-left: 0;
   margin-right: auto;
   background-color: transparent;
-  border-radius: 10px;
-  padding: 12px 20px;
+  padding: 6px 0;
   max-width: 100%;
   margin: 5px 0;
   width: fit-content;
@@ -202,13 +203,33 @@ onMounted(() => {
 }
 
 :deep(.hljs) {
-  background-color: var(--el-fill-color-dark) !important;
-  border-radius: 8px;
-  padding: 12px;
+  background-color: var(--dd-surface-muted) !important;
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius-md);
+  padding: 14px;
 }
 
 :deep(pre) {
   margin: 10px 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+:deep(.message-content) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+:deep(.message-content > div) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+:deep(.message-content code) {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 /* 复制按钮样式 */
@@ -219,7 +240,7 @@ onMounted(() => {
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
-  background-color: var(--el-fill-color-light);
+  background-color: var(--dd-surface);
   transition: all 0.2s;
   z-index: 10;
   display: flex;
@@ -227,16 +248,35 @@ onMounted(() => {
 }
 
 :deep(.copy-icon:hover) {
-  background-color: var(--el-fill-color);
+  background-color: var(--dd-surface-hover);
 }
 
 :deep(.copy-icon) svg {
   width: 16px;
   height: 16px;
-  color: #666;
+  color: var(--dd-text-secondary);
 }
 
 :deep(.copy-icon:hover) svg {
-  color: #7ec290;
+  color: var(--dd-accent);
+}
+
+@media (max-width: 480px) {
+  .user-message {
+    padding: 9px 13px;
+  }
+
+  .ai-message {
+    width: 100%;
+  }
+
+  :deep(table) {
+    font-size: 13px;
+  }
+
+  :deep(th),
+  :deep(td) {
+    padding: 8px;
+  }
 }
 </style>
