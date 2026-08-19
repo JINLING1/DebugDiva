@@ -2,7 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	clearAllDebugDivaLocalData,
 	DEBUG_DIVA_LOCAL_DATA_KEYS,
+	IMAGE_BLOB_LOCAL_DATA_KEY,
 } from './localDataManagement';
+import type { ImageBlobRepository } from './imageBlobStorage';
+
+const imageRepository = (clear = vi.fn()): ImageBlobRepository => ({
+	put: vi.fn(),
+	get: vi.fn(),
+	getMany: vi.fn(async () => []),
+	delete: vi.fn(),
+	retain: vi.fn(async () => []),
+	clear,
+	close: vi.fn(),
+});
 
 describe('local data management', () => {
 	it('owns the complete local data key allowlist', () => {
@@ -16,7 +28,7 @@ describe('local data management', () => {
 		]);
 	});
 
-	it('removes every known DebugDiva key without clearing the origin', () => {
+	it('removes every known DebugDiva key and IndexedDB image without clearing the origin', async () => {
 		const values = new Map<string, string>([
 			...DEBUG_DIVA_LOCAL_DATA_KEYS.map(
 				key => [key, `value:${key}`] as const,
@@ -27,22 +39,24 @@ describe('local data management', () => {
 		const removeItem = vi.fn((key: string) => values.delete(key));
 		const storage = { removeItem, clear };
 
-		const result = clearAllDebugDivaLocalData(storage);
+		const repository = imageRepository();
+		const result = await clearAllDebugDivaLocalData(storage, repository);
 
 		expect(result).toEqual({
 			ok: true,
-			attempted: DEBUG_DIVA_LOCAL_DATA_KEYS.length,
-			removedKeys: [...DEBUG_DIVA_LOCAL_DATA_KEYS],
+			attempted: DEBUG_DIVA_LOCAL_DATA_KEYS.length + 1,
+			removedKeys: [...DEBUG_DIVA_LOCAL_DATA_KEYS, IMAGE_BLOB_LOCAL_DATA_KEY],
 			failed: [],
 		});
 		expect(removeItem.mock.calls.map(([key]) => key)).toEqual([
 			...DEBUG_DIVA_LOCAL_DATA_KEYS,
 		]);
 		expect(clear).not.toHaveBeenCalled();
+		expect(repository.clear).toHaveBeenCalledTimes(1);
 		expect(values.get('portfolio:unrelated')).toBe('keep-me');
 	});
 
-	it('continues after individual failures and reports partial details', () => {
+	it('continues after individual failures and reports partial details', async () => {
 		const failedKeys = new Set([
 			'debugdiva:summaries:v1',
 			'theme',
@@ -51,12 +65,15 @@ describe('local data management', () => {
 			if (failedKeys.has(key)) throw new Error(`blocked:${key}`);
 		});
 
-		const result = clearAllDebugDivaLocalData({ removeItem });
+		const result = await clearAllDebugDivaLocalData(
+			{ removeItem },
+			imageRepository(),
+		);
 
 		expect(result.ok).toBe(false);
-		expect(result.attempted).toBe(DEBUG_DIVA_LOCAL_DATA_KEYS.length);
+		expect(result.attempted).toBe(DEBUG_DIVA_LOCAL_DATA_KEYS.length + 1);
 		expect(result.removedKeys).toHaveLength(
-			DEBUG_DIVA_LOCAL_DATA_KEYS.length - failedKeys.size,
+			DEBUG_DIVA_LOCAL_DATA_KEYS.length - failedKeys.size + 1,
 		);
 		expect(result.failed).toEqual([
 			{
@@ -68,13 +85,30 @@ describe('local data management', () => {
 		expect(removeItem).toHaveBeenCalledTimes(DEBUG_DIVA_LOCAL_DATA_KEYS.length);
 	});
 
-	it('uses a safe error description for non-Error browser exceptions', () => {
-		const result = clearAllDebugDivaLocalData({
-			removeItem: () => {
-				throw 'denied';
+	it('uses a safe error description for non-Error browser exceptions', async () => {
+		const result = await clearAllDebugDivaLocalData(
+			{
+				removeItem: () => {
+					throw 'denied';
+				},
 			},
-		});
+			imageRepository(),
+		);
 
 		expect(result.failed[0]?.error).toBe('浏览器拒绝删除该本地数据');
+	});
+
+	it('reports an IndexedDB clear failure after removing localStorage keys', async () => {
+		const clear = vi.fn().mockRejectedValue(new Error('idb blocked'));
+		const result = await clearAllDebugDivaLocalData(
+			{ removeItem: vi.fn() },
+			imageRepository(clear),
+		);
+
+		expect(result.ok).toBe(false);
+		expect(result.failed).toContainEqual({
+			key: IMAGE_BLOB_LOCAL_DATA_KEY,
+			error: 'idb blocked',
+		});
 	});
 });

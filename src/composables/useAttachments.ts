@@ -6,11 +6,16 @@ import {
 } from '../api/files';
 import { AppError } from '../services/errors/AppError';
 import {
+	IMAGE_ORIGINAL_NOT_STORED_WARNING,
 	loadAttachmentResults,
 	saveAttachmentResults,
 	type AttachmentStorageLike,
 	type LoadAttachmentResultsResult,
 } from '../services/storage/attachmentStorage';
+import {
+	createIndexedDbImageBlobRepository,
+	type ImageBlobRepository,
+} from '../services/storage/imageBlobStorage';
 import {
 	MAX_ATTACHMENTS_PER_MESSAGE,
 	type ChatAttachment,
@@ -41,8 +46,9 @@ export interface UseAttachmentsOptions {
 	createId?: () => string;
 	now?: () => number;
 	maxFileSize?: number;
-	createObjectURL?: (file: File) => string;
+	createObjectURL?: (value: Blob) => string;
 	revokeObjectURL?: (url: string) => void;
+	imageBlobRepository?: ImageBlobRepository;
 }
 
 export interface AttachmentOperationError {
@@ -102,6 +108,11 @@ const validateVisionResult = (value: VisionResult): VisionResult => {
 const resolveBrowserStorage = (): AttachmentStorageLike | undefined =>
 	typeof localStorage === 'undefined' ? undefined : localStorage;
 
+const resolveImageBlobRepository = (): ImageBlobRepository | undefined =>
+	typeof indexedDB === 'undefined'
+		? undefined
+		: createIndexedDbImageBlobRepository(indexedDB);
+
 export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 	const records = shallowRef<ChatAttachment[]>([]);
 	const storageError = shallowRef<AttachmentOperationError>();
@@ -109,6 +120,8 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 	const controllers = new Map<string, AbortController>();
 	const previewUrls = new Map<string, string>();
 	const storage = options.storage ?? resolveBrowserStorage();
+	const imageBlobRepository =
+		options.imageBlobRepository ?? resolveImageBlobRepository();
 	const parseFile = options.parseFile ?? defaultParser;
 	const analyzeImage =
 		options.analyzeImage ??
@@ -123,7 +136,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 	const createObjectURL =
 		options.createObjectURL ??
 		(typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
-			? (file: File) => URL.createObjectURL(file)
+			? (value: Blob) => URL.createObjectURL(value)
 			: undefined);
 	const revokeObjectURL =
 		options.revokeObjectURL ??
@@ -265,6 +278,29 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 
 		try {
 			if (record.kind === 'image') {
+				if (!imageBlobRepository) {
+					throw new AppError({
+						code: 'IMAGE_STORAGE_UNAVAILABLE',
+						message: '浏览器图片存储不可用，请更换浏览器后重试',
+						retryable: false,
+					});
+				}
+				try {
+					await imageBlobRepository.put({
+						attachmentId: id,
+						blob: file,
+						name: file.name,
+						mimeType: file.type,
+						size: file.size,
+						createdAt: record.createdAt,
+					});
+				} catch {
+					throw new AppError({
+						code: 'IMAGE_STORAGE_FAILED',
+						message: '图片无法保存到本地，请检查浏览器存储空间后重试',
+						retryable: true,
+					});
+				}
 				const result = validateVisionResult(
 					await analyzeImage!(file, prompt!.trim(), controller.signal),
 				);
@@ -500,6 +536,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 	const remove = (id: string): boolean => {
 		const index = records.value.findIndex(record => record.id === id);
 		if (index < 0) return false;
+		const removedRecord = records.value[index];
 		const controller = controllers.get(id);
 		controllers.delete(id);
 		controller?.abort();
@@ -507,6 +544,14 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		releasePreviewUrl(id);
 		records.value = records.value.filter(record => record.id !== id);
 		persist();
+		if (removedRecord.kind === 'image') {
+			void imageBlobRepository?.delete(id).catch(() => {
+				storageError.value = {
+					code: 'IMAGE_STORAGE_DELETE_FAILED',
+					message: '本地图片清理失败',
+				};
+			});
+		}
 		return true;
 	};
 
@@ -527,6 +572,90 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		records.value = records.value.filter(record => retainedSet.has(record.id));
 		persist();
 		return removedIds;
+	};
+
+	const retainStoredImages = async (
+		retainedIds: readonly string[],
+	): Promise<string[]> => {
+		if (!imageBlobRepository) return [];
+		try {
+			return await imageBlobRepository.retain(retainedIds);
+		} catch {
+			storageError.value = {
+				code: 'IMAGE_STORAGE_DELETE_FAILED',
+				message: '本地图片清理失败',
+			};
+			return [];
+		}
+	};
+
+	const restoreImagePreviews = async (
+		ids?: readonly string[],
+	): Promise<{ restoredIds: string[]; missingIds: string[] }> => {
+		const selected = ids ? new Set(ids) : undefined;
+		const candidates = records.value.filter(
+			(record): record is ImageAttachment =>
+				record.kind === 'image' &&
+				!record.previewUrl &&
+				(!selected || selected.has(record.id)),
+		);
+		if (!candidates.length) return { restoredIds: [], missingIds: [] };
+		if (!imageBlobRepository || !createObjectURL) {
+			return { restoredIds: [], missingIds: candidates.map(record => record.id) };
+		}
+
+		try {
+			const storedImages = await imageBlobRepository.getMany(
+				candidates.map(record => record.id),
+			);
+			const byId = new Map(
+				storedImages.map(record => [record.attachmentId, record]),
+			);
+			const restoredIds: string[] = [];
+			for (const candidate of candidates) {
+				const stored = byId.get(candidate.id);
+				if (!stored) continue;
+				try {
+					const previewUrl = createObjectURL(stored.blob);
+					previewUrls.set(candidate.id, previewUrl);
+					if (candidate.status !== 'ready' || !candidate.result) {
+						files.set(
+							candidate.id,
+							stored.blob instanceof File
+								? stored.blob
+								: new File([stored.blob], stored.name, {
+										type: stored.mimeType,
+								  }),
+						);
+					}
+					replaceRecord(
+						candidate.id,
+						{
+							previewUrl,
+							warnings: candidate.warnings.filter(
+								warning => warning !== IMAGE_ORIGINAL_NOT_STORED_WARNING,
+							),
+						},
+						false,
+					);
+					restoredIds.push(candidate.id);
+				} catch {
+				}
+			}
+			const restored = new Set(restoredIds);
+			return {
+				restoredIds,
+				missingIds: candidates
+					.map(record => record.id)
+					.filter(id => !restored.has(id)),
+			};
+		} catch {
+			storageError.value = {
+				code: 'IMAGE_STORAGE_READ_FAILED',
+				message: '本地图片读取失败',
+			};
+			return { restoredIds: [], missingIds: candidates.map(record => record.id) };
+		}
 	};
 
 	const load = (): LoadAttachmentResultsResult => {
@@ -592,6 +721,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		controllers.clear();
 		files.clear();
 		releaseAllPreviewUrls();
+		imageBlobRepository?.close();
 	};
 
 	return {
@@ -606,6 +736,8 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		cancel,
 		remove,
 		retain,
+		retainStoredImages,
+		restoreImagePreviews,
 		getReadyAttachments,
 		hasOriginalFile,
 		releaseOriginalFiles,

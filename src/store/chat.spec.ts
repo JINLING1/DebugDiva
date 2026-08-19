@@ -444,11 +444,13 @@ describe('chat store provider orchestration', () => {
 					finishPreparation = resolve;
 				}),
 		);
+		const onAccepted = vi.fn();
 
 		const pending = store.handleChat({
 			input: '定位截图中的报错',
 			attachmentIds: ['waiting-image'],
 			attachmentResults: [waitingImage],
+			onAccepted,
 			prepareAttachments,
 		});
 		await Promise.resolve();
@@ -460,6 +462,8 @@ describe('chat store provider orchestration', () => {
 			status: 'pending',
 		});
 		expect(store.isAssistantTyping).toBe(true);
+		expect(onAccepted).toHaveBeenCalledOnce();
+		expect(onAccepted).toHaveBeenCalledWith(['waiting-image']);
 		expect(streamSpy).not.toHaveBeenCalled();
 		expect(prepareAttachments).toHaveBeenCalledWith(
 			expect.objectContaining({

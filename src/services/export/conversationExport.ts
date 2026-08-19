@@ -2,7 +2,12 @@ import {
 	normalizeDocumentAttachment,
 	normalizeImageAttachment,
 } from '../storage/attachmentStorage';
+import {
+	createIndexedDbImageBlobRepository,
+	type ImageBlobRepository,
+} from '../storage/imageBlobStorage';
 import { normalizeConversationSummary } from '../storage/summaryStorage';
+import { strToU8, zip } from 'fflate';
 import type {
 	ChatAttachment,
 	DocumentAttachment,
@@ -17,7 +22,7 @@ import type {
 	TokenUsage,
 } from '../../types/chat';
 
-export const CONVERSATION_EXPORT_SCHEMA_VERSION = 1 as const;
+export const CONVERSATION_EXPORT_SCHEMA_VERSION = 2 as const;
 export const CONVERSATION_EXPORT_APP = 'DebugDiva' as const;
 
 type ExportedMessageContent =
@@ -64,7 +69,9 @@ export interface ExportedChatSession {
 }
 
 type ExportedDocumentAttachment = DocumentAttachment;
-type ExportedImageAttachment = Omit<ImageAttachment, 'previewUrl'>;
+type ExportedImageAttachment = Omit<ImageAttachment, 'previewUrl'> & {
+	filePath?: string;
+};
 export type ExportedAttachment =
 	| ExportedDocumentAttachment
 	| ExportedImageAttachment;
@@ -80,11 +87,19 @@ export interface ConversationExportDocument {
 export interface ConversationDownloadEnvironment {
 	documentRef?: Document;
 	urlApi?: Pick<typeof URL, 'createObjectURL' | 'revokeObjectURL'>;
+	imageBlobRepository?: ImageBlobRepository;
 }
 
 export interface ConversationDownloadResult {
 	filename: string;
 	bytes: number;
+	missingImageIds: string[];
+}
+
+export interface ConversationArchiveResult {
+	document: ConversationExportDocument;
+	archive: Uint8Array;
+	missingImageIds: string[];
 }
 
 const projectContent = (
@@ -169,6 +184,7 @@ const projectVisionResult = (result: VisionResult): VisionResult => ({
 
 const projectAttachment = (
 	attachment: ChatAttachment,
+	imageFilePaths: ReadonlyMap<string, string>,
 ): ExportedAttachment | null => {
 	if (attachment.kind === 'document') {
 		const normalized = normalizeDocumentAttachment(attachment);
@@ -214,6 +230,9 @@ const projectAttachment = (
 			: {}),
 		createdAt: normalized.createdAt,
 		updatedAt: normalized.updatedAt,
+		...(imageFilePaths.has(normalized.id)
+			? { filePath: imageFilePaths.get(normalized.id) }
+			: {}),
 	};
 };
 
@@ -243,6 +262,7 @@ export const createConversationExport = (
 	session: ChatSession,
 	attachments: readonly ChatAttachment[],
 	exportedAt = new Date(),
+	imageFilePaths: ReadonlyMap<string, string> = new Map(),
 ): ConversationExportDocument => {
 	const referencedIds = new Set(collectSessionAttachmentIds(session));
 	const summary = normalizeConversationSummary(session.summary);
@@ -255,7 +275,7 @@ export const createConversationExport = (
 		) {
 			continue;
 		}
-		const projected = projectAttachment(attachment);
+		const projected = projectAttachment(attachment, imageFilePaths);
 		if (!projected) continue;
 		exportedAttachmentIds.add(projected.id);
 		projectedAttachments.push(projected);
@@ -303,22 +323,117 @@ export const createConversationExportFilename = (
 	const date = Number.isFinite(exportedAt.getTime())
 		? exportedAt.toISOString().slice(0, 10)
 		: 'export';
-	return `DebugDiva-${safeTitle}-${date}.json`;
+	return `DebugDiva-${safeTitle}-${date}.zip`;
 };
 
-export const downloadConversationExport = (
+const extensionForMimeType = (mimeType: string): string | undefined => {
+	switch (mimeType.toLowerCase()) {
+		case 'image/jpeg':
+			return 'jpg';
+		case 'image/png':
+			return 'png';
+		case 'image/webp':
+			return 'webp';
+		default:
+			return undefined;
+	}
+};
+
+const imageFilePath = (attachmentId: string, mimeType: string): string | undefined => {
+	const extension = extensionForMimeType(mimeType);
+	if (!extension) return undefined;
+	const safeId = attachmentId.replace(/[^A-Za-z0-9_-]/g, '_');
+	return `images/${safeId || 'image'}.${extension}`;
+};
+
+const createZipArchive = (
+	entries: Record<string, Uint8Array>,
+): Promise<Uint8Array> =>
+	new Promise((resolve, reject) => {
+		zip(entries, { level: 0 }, (error, data) => {
+			if (error) reject(error);
+			else resolve(data);
+		});
+	});
+
+export const createConversationArchive = async (
+	session: ChatSession,
+	attachments: readonly ChatAttachment[],
+	exportedAt = new Date(),
+	imageBlobRepository?: ImageBlobRepository,
+): Promise<ConversationArchiveResult> => {
+	const referencedIds = new Set(collectSessionAttachmentIds(session));
+	const referencedImages = attachments.filter(
+		(attachment): attachment is ImageAttachment =>
+			attachment.kind === 'image' && referencedIds.has(attachment.id),
+	);
+	const storedImages = imageBlobRepository
+		? await imageBlobRepository.getMany(
+				referencedImages.map(attachment => attachment.id),
+			)
+		: [];
+	const storedById = new Map(
+		storedImages.map(image => [image.attachmentId, image]),
+	);
+	const imageFilePaths = new Map<string, string>();
+	const entries: Record<string, Uint8Array> = {};
+	const missingImageIds: string[] = [];
+
+	for (const attachment of referencedImages) {
+		const stored = storedById.get(attachment.id);
+		const filePath = imageFilePath(
+			attachment.id,
+			stored?.mimeType || attachment.mimeType,
+		);
+		if (!stored || !filePath) {
+			missingImageIds.push(attachment.id);
+			continue;
+		}
+		imageFilePaths.set(attachment.id, filePath);
+		entries[filePath] = new Uint8Array(await stored.blob.arrayBuffer());
+	}
+
+	const document = createConversationExport(
+		session,
+		attachments,
+		exportedAt,
+		imageFilePaths,
+	);
+	entries['conversation.json'] = strToU8(serializeConversationExport(document));
+	return {
+		document,
+		archive: await createZipArchive(entries),
+		missingImageIds,
+	};
+};
+
+export const downloadConversationExport = async (
 	session: ChatSession,
 	attachments: readonly ChatAttachment[],
 	exportedAt = new Date(),
 	environment: ConversationDownloadEnvironment = {},
-): ConversationDownloadResult => {
+): Promise<ConversationDownloadResult> => {
 	const documentRef = environment.documentRef ?? document;
 	const urlApi = environment.urlApi ?? URL;
-	const serialized = serializeConversationExport(
-		createConversationExport(session, attachments, exportedAt),
-	);
-	const blob = new Blob([serialized], {
-		type: 'application/json;charset=utf-8',
+	const ownsRepository = !environment.imageBlobRepository;
+	const imageBlobRepository =
+		environment.imageBlobRepository ??
+		(typeof indexedDB === 'undefined'
+			? undefined
+			: createIndexedDbImageBlobRepository(indexedDB));
+	let archiveResult: ConversationArchiveResult;
+	try {
+		archiveResult = await createConversationArchive(
+			session,
+			attachments,
+			exportedAt,
+			imageBlobRepository,
+		);
+	} finally {
+		if (ownsRepository) imageBlobRepository?.close();
+	}
+	const blob = new Blob([archiveResult.archive as BlobPart], {
+		type: 'application/zip',
 	});
 	const objectUrl = urlApi.createObjectURL(blob);
 	const filename = createConversationExportFilename(session.title, exportedAt);
@@ -335,5 +450,9 @@ export const downloadConversationExport = (
 		urlApi.revokeObjectURL(objectUrl);
 	}
 
-	return { filename, bytes: blob.size };
+	return {
+		filename,
+		bytes: blob.size,
+		missingImageIds: archiveResult.missingImageIds,
+	};
 };

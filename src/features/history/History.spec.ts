@@ -114,7 +114,12 @@ describe('History data management actions', () => {
 			attachments: [{ id: 'attachment-1' }],
 			recoveredFromError: false,
 		});
-		mocks.clearAllDebugDivaLocalData.mockReturnValue({
+		mocks.downloadConversationExport.mockResolvedValue({
+			filename: 'conversation.zip',
+			bytes: 100,
+			missingImageIds: [],
+		});
+		mocks.clearAllDebugDivaLocalData.mockResolvedValue({
 			ok: true,
 			attempted: 8,
 			removedKeys: [],
@@ -129,12 +134,13 @@ describe('History data management actions', () => {
 		await wrapper
 			.get('[aria-label="导出会话 前端调试记录"]')
 			.trigger('click');
+		await flushPromises();
 
 		expect(mocks.loadAttachmentResults).toHaveBeenCalledWith(localStorage);
 		expect(mocks.downloadConversationExport).toHaveBeenCalledWith(session, [
 			{ id: 'attachment-1' },
 		]);
-		expect(mocks.message.success).toHaveBeenCalledWith('会话 JSON 已导出。');
+		expect(mocks.message.success).toHaveBeenCalledWith('会话 ZIP 已导出。');
 	});
 
 	it('reports a partial attachment read while still exporting the session', async () => {
@@ -147,10 +153,30 @@ describe('History data management actions', () => {
 		await wrapper
 			.get('[aria-label="导出会话 前端调试记录"]')
 			.trigger('click');
+		await flushPromises();
 
 		expect(mocks.downloadConversationExport).toHaveBeenCalledTimes(1);
 		expect(mocks.message.warning).toHaveBeenCalledWith(
 			'会话已导出，但部分本地附件记录无法读取。',
+		);
+	});
+
+	it('warns once when a ZIP cannot include a historical original image', async () => {
+		mocks.downloadConversationExport.mockResolvedValue({
+			filename: 'conversation.zip',
+			bytes: 100,
+			missingImageIds: ['missing-image'],
+		});
+		const { wrapper } = renderHistory();
+
+		await wrapper
+			.get('[aria-label="导出会话 前端调试记录"]')
+			.trigger('click');
+		await flushPromises();
+
+		expect(mocks.message.warning).toHaveBeenCalledOnce();
+		expect(mocks.message.warning).toHaveBeenCalledWith(
+			'会话 ZIP 已导出，但部分历史图片缺少原图，仅保留了元数据。',
 		);
 	});
 

@@ -103,6 +103,12 @@ const handleSend = async (text: string) => {
 		input: text,
 		attachmentIds: selectedIds,
 		attachmentResults: attachmentRecords.value,
+		onAccepted: acceptedIds => {
+			const accepted = new Set(acceptedIds);
+			setActiveAttachmentIds(
+				activeAttachmentIds.value.filter(id => !accepted.has(id)),
+			);
+		},
 		prepareAttachments: ({ prompt, attachmentIds, signal }) =>
 			attachmentManager.prepareForSend(attachmentIds, prompt, signal),
 	});
@@ -178,6 +184,7 @@ const regenerateMessage = (messageId: string) => {
 onMounted(() => {
 	loadSettings();
 	attachmentManager.load();
+	void attachmentManager.restoreImagePreviews();
 	loadDataFromLocalStorage();
 });
 
@@ -211,9 +218,10 @@ watch(
 
 watch(
 	[referencedAttachmentIds, attachmentRecords, canPruneAttachmentResults],
-	([retainedIds, records, canPrune]) => {
-		if (!canPrune || !records.length) return;
+	([retainedIds, _records, canPrune]) => {
+		if (!canPrune) return;
 		attachmentManager.retain(retainedIds);
+		void attachmentManager.retainStoredImages(retainedIds);
 	},
 	{ flush: 'post' },
 );

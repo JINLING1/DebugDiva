@@ -82,6 +82,11 @@ const createAttachmentManager = () => ({
 	cancel: vi.fn().mockReturnValue(true),
 	remove: vi.fn().mockReturnValue(true),
 	retain: vi.fn().mockReturnValue([]),
+	retainStoredImages: vi.fn().mockResolvedValue([]),
+	restoreImagePreviews: vi.fn().mockResolvedValue({
+		restoredIds: [],
+		missingIds: [],
+	}),
 	releaseOriginalFiles: vi.fn(),
 	dispose: vi.fn(),
 });
@@ -123,8 +128,28 @@ describe('ChatView attachment integration', () => {
 		const { wrapper, attachmentManager } = renderView();
 
 		expect(attachmentManager.load).toHaveBeenCalledTimes(1);
+		expect(attachmentManager.restoreImagePreviews).toHaveBeenCalledTimes(1);
 		wrapper.unmount();
 		expect(attachmentManager.dispose).toHaveBeenCalledTimes(1);
+	});
+
+	it('clears accepted attachments immediately while keeping rejected input intact', async () => {
+		const { chatStore, chatWindow, attachmentManager } = renderView();
+		attachmentManager.records.value = [createAttachment('accepted')];
+		chatStore.setActiveAttachmentIds(['accepted']);
+
+		chatWindow.vm.$emit('send', '请生成一张图片');
+		await nextTick();
+		expect(chatStore.activeAttachmentIds).toEqual([]);
+		expect(chatStore.chatHistory[0].contents).toContainEqual(
+			expect.objectContaining({ attachmentId: 'accepted' }),
+		);
+
+		chatStore.startNewChat();
+		chatStore.setActiveAttachmentIds(['accepted']);
+		chatWindow.vm.$emit('send', '   ');
+		await nextTick();
+		expect(chatStore.activeAttachmentIds).toEqual(['accepted']);
 	});
 
 	it('accepts only the remaining attachment slots and warns about omitted files', async () => {
@@ -288,6 +313,10 @@ describe('ChatView attachment integration', () => {
 			'citation-shared',
 			'shared',
 		]);
+		expect(attachmentManager.retainStoredImages).toHaveBeenLastCalledWith([
+			'citation-shared',
+			'shared',
+		]);
 	});
 
 	it('does not delete a record that another session still references', async () => {
@@ -345,6 +374,7 @@ describe('ChatView attachment integration', () => {
 
 		expect(chatStore.canPruneAttachmentResults).toBe(false);
 		expect(attachmentManager.retain).not.toHaveBeenCalled();
+		expect(attachmentManager.retainStoredImages).not.toHaveBeenCalled();
 		expect(localStorage.getItem(ATTACHMENT_RESULTS_STORAGE_KEY)).toBe(
 			attachmentRaw,
 		);

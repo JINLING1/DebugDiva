@@ -43,6 +43,7 @@
     "@vue/test-utils": "2.4.6",
     "cz-conventional-changelog": "^3.3.0",
     "eslint": "^9.18.0",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.1",
     "sass": "^1.83.4",
     "typescript": "^5.7.3",

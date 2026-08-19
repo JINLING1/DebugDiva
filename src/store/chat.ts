@@ -512,6 +512,7 @@ export const useChatStore = defineStore('chat', () => {
 		updateIndex,
 		attachmentIds,
 		attachmentResults,
+		onAccepted,
 		prepareAttachments,
 	}: ChatParams = {}) => {
 		if (isAssistantTyping.value) {
@@ -589,6 +590,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 
 			saveSessionsToLocalStorage();
+			if (!isRegeneration) onAccepted?.([...requestAttachmentIds]);
 			scheduleConversationSummary();
 			return;
 		}
@@ -624,6 +626,7 @@ export const useChatStore = defineStore('chat', () => {
 		isAssistantTyping.value = true;
 		assistantMessageIndex = targetIndex;
 		saveSessionsToLocalStorage();
+		if (!isRegeneration) onAccepted?.([...requestAttachmentIds]);
 
 		const controller = new AbortController();
 		abortController.value = controller;

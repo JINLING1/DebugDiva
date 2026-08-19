@@ -77,6 +77,7 @@ export interface ChatParams {
 	updateIndex?: number;
 	attachmentIds?: string[];
 	attachmentResults?: ChatAttachment[];
+	onAccepted?: (attachmentIds: string[]) => void;
 	prepareAttachments?: (request: {
 		prompt: string;
 		attachmentIds: string[];

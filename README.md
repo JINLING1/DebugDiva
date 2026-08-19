@@ -15,9 +15,9 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 - 文本、PDF、DOCX 在 Pages Function 中解析；原始文件不进入 localStorage。
 - 用户发送图片问题后，后台由千问 `qwen3.6-flash` 提取描述、OCR 和对象信息，再把纯文本结果交给 DeepSeek；界面只展示最终回答。
 - 长对话使用结构化摘要 + 最近消息，摘要失败不阻塞当前聊天。
-- 版本化 localStorage、容量上限、损坏数据保护、孤儿附件回收。
+- 版本化 localStorage、IndexedDB 原图存储、容量保护和跨会话孤儿附件回收。
 - 统一错误协议、`requestId`、超时、取消和脱敏日志，服务端不记录完整提示词或文件正文。
-- 会话 JSON 导出和“清除全部本地数据”，导出使用严格字段白名单。
+- 会话 ZIP 导出和“清除全部本地数据”，导出使用严格字段白名单并只打包当前会话原图。
 
 ## 支持范围
 
@@ -46,6 +46,7 @@ flowchart LR
     Store <--> Local[("版本化 localStorage")]
     Attach <--> Local
     Memory <--> Local
+    Attach <--> ImageDB[("IndexedDB 图片 Blob")]
   end
 
   subgraph Pages["Cloudflare Pages Functions"]
@@ -71,7 +72,7 @@ flowchart LR
 
 1. 聊天：组件事件 → Pinia → `DeepSeekChatProvider` → `/api/chat` → SSE 增量渲染。
 2. 文档：浏览器临时上传原文件 → `/api/files/parse` → 返回提取文本 → 作为附件上下文注入聊天。
-3. 图片：浏览器选择原图并输入问题 → 发送后调用 `/api/vision/analyze` → 千问返回结构化文字分析 → DeepSeek 只接收文字并生成最终回答。
+3. 图片：浏览器选择原图并输入问题 → 消息接受后保存原图到 IndexedDB 并清空输入区 → 调用 `/api/vision/analyze` → 千问返回结构化文字分析 → DeepSeek 只接收文字并生成最终回答；历史图片可点击放大。
 4. 摘要：对话超过阈值后后台调用 `/api/summarize`；下一轮上下文按“能力指令 → 摘要 → 激活附件 → 最近消息”组装。
 
 ## 目录与职责
@@ -161,12 +162,12 @@ debugdiva:attachment-results:v1
 debugdiva:summaries:v1
 ```
 
-- 原始 `File`、Blob、Object URL、图片 Base64 和 API Key 永不持久化。
-- 刷新后保留文档提取文本和内部图片理解缓存；界面不展示视觉模型的中间结果。
+- localStorage 不保存原始 `File`、Blob、Object URL、图片 Base64 或 API Key；已发送图片的原始 Blob 仅保存在 `debugdiva` IndexedDB 的 `image-blobs` 仓库。
+- 刷新后会从 IndexedDB 重建图片 Object URL；文档提取文本和内部图片理解缓存继续保留，界面不展示视觉模型的中间结果。
 - 会话加载失败时保留源键原始值，不用空数据覆盖关联摘要或附件记录。
 - localStorage 是当前浏览器、当前设备的数据，不是账户云存储，也不会跨设备同步。
-- 会话可导出 JSON；文件只包含该会话实际引用的数据，仍可能包含聊天正文、推理文本、文档提取内容和 OCR，分享前应自行检查。
-- “清除全部本地数据”只删除 DebugDiva 自己的键，不调用 `localStorage.clear()`，且操作不可撤销。
+- 会话统一导出 ZIP，包含 `conversation.json` 和当前会话可恢复的 `images/` 原图；仍可能包含聊天正文、推理文本、文档提取内容和 OCR，分享前应自行检查。
+- “清除全部本地数据”只删除 DebugDiva 自己的 localStorage 键并清空图片仓库，不调用 `localStorage.clear()`，且操作不可撤销。
 
 ## 可靠性与安全设计
 
@@ -192,7 +193,8 @@ Cloudflare Pages 的构建、Functions 和服务端配置见 [部署说明](docs
 - PDF 最多 50 页；扫描 PDF 没有专业 OCR；加密文档、XLSX、PPTX、ZIP / RAR 不支持。
 - DOCX 仅提取主要 XML 文本，展开 XML 上限 5MB，不处理宏、图片或外链。
 - 图片仅支持 JPEG / PNG / WebP；最大边长 4096，总像素不超过 16,777,216；不支持 GIF。
-- 原图不持久化，刷新后不能恢复缩略图，但已缓存的图片理解上下文仍可供后续对话使用。
+- 仅已发送图片的原图会写入 IndexedDB；旧会话没有原图时显示“图片暂不可预览”，导出时只保留图片元数据。
+- 图片原图不设置额外的应用级总容量，实际可用空间受浏览器配额和用户设备限制。
 - 会话约 4MB、附件解析结果约 2MB、摘要约 512KB、设置约 16KB，达到上限后需导出并清理。
 - Cloudflare `request.formData()` 在请求缺少可信 `Content-Length` 时会先解析 multipart，再按 `File.size` 二次拒绝；生产环境仍依赖平台请求上限作为第一道保护。
 - 当前前端主包仍较大，Vite 构建会提示 chunk 超过 500KB；后续可按路由和 Markdown / 解析依赖做按需加载。

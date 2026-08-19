@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_ATTACHMENT_FILE_SIZE } from '../api/files';
 import { AppError } from '../services/errors/AppError';
 import {
@@ -9,6 +10,10 @@ import {
 	saveAttachmentResults,
 	type AttachmentStorageLike,
 } from '../services/storage/attachmentStorage';
+import {
+	type ImageBlobRepository,
+	type StoredImageBlob,
+} from '../services/storage/imageBlobStorage';
 import type {
 	DocumentAttachment,
 	ImageAttachment,
@@ -20,6 +25,10 @@ import {
 	type AttachmentParser,
 	type ImageAnalyzer,
 } from './useAttachments';
+
+beforeEach(() => {
+	vi.stubGlobal('indexedDB', new IDBFactory());
+});
 
 class MemoryStorage implements AttachmentStorageLike {
 	readonly values = new Map<string, string>();
@@ -78,6 +87,32 @@ const visionResult = (
 	warnings: [],
 	...overrides,
 });
+
+const createMemoryImageRepository = (): ImageBlobRepository => {
+	const records = new Map<string, StoredImageBlob>();
+	return {
+		put: vi.fn(async (record: StoredImageBlob) => {
+			records.set(record.attachmentId, record);
+		}),
+		get: vi.fn(async (id: string) => records.get(id)),
+		getMany: vi.fn(async (ids: readonly string[]) =>
+			[...new Set(ids)]
+				.map(id => records.get(id))
+				.filter((record): record is StoredImageBlob => Boolean(record)),
+		),
+		delete: vi.fn(async (id: string) => {
+			records.delete(id);
+		}),
+		retain: vi.fn(async (ids: readonly string[]) => {
+			const retained = new Set(ids);
+			const removed = [...records.keys()].filter(id => !retained.has(id));
+			removed.forEach(id => records.delete(id));
+			return removed;
+		}),
+		clear: vi.fn(async () => records.clear()),
+		close: vi.fn(),
+	};
+};
 
 const persistedImageAttachment = (
 	overrides: Partial<ImageAttachment> = {},
@@ -176,7 +211,7 @@ describe('useAttachments', () => {
 				'分析截图中的错误',
 				new AbortController().signal,
 			);
-			await Promise.resolve();
+			await vi.waitFor(() => expect(analyzer).toHaveBeenCalledTimes(1));
 			expect(attachments.records.value[0].status).toBe('analyzing');
 			expect(analyzer).toHaveBeenCalledWith(
 				file,
@@ -195,6 +230,68 @@ describe('useAttachments', () => {
 			expect(createObjectURL).toHaveBeenCalledTimes(1);
 		},
 	);
+
+	it('stores an image only after send preparation and before analysis', async () => {
+		const repository = createMemoryImageRepository();
+		const analyzer = vi.fn<ImageAnalyzer>(async () => {
+			expect(await repository.get('persisted-image')).toMatchObject({
+				attachmentId: 'persisted-image',
+				name: 'persisted.png',
+				mimeType: 'image/png',
+			});
+			return visionResult();
+		});
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			imageBlobRepository: repository,
+			analyzeImage: analyzer,
+			createId: () => 'persisted-image',
+			createObjectURL: () => 'blob:persisted-image',
+		});
+		const ids = attachments.queueFiles([
+			new File(['pixels'], 'persisted.png', { type: 'image/png' }),
+		]);
+
+		expect(await repository.get('persisted-image')).toBeUndefined();
+		await attachments.prepareForSend(
+			ids,
+			'分析图片',
+			new AbortController().signal,
+		);
+		expect(analyzer).toHaveBeenCalledTimes(1);
+	});
+
+	it('restores an image preview from IndexedDB after attachment metadata loads', async () => {
+		const storage = new MemoryStorage();
+		const repository = createMemoryImageRepository();
+		saveAttachmentResults(storage, [persistedImageAttachment()]);
+		await repository.put({
+			attachmentId: 'stored-image',
+			blob: new File(['pixels'], 'stored.png', { type: 'image/png' }),
+			name: 'stored.png',
+			mimeType: 'image/png',
+			size: 6,
+			createdAt: 1,
+		});
+		const createObjectURL = vi.fn(() => 'blob:restored-image');
+		const attachments = useAttachments({
+			storage,
+			imageBlobRepository: repository,
+			createObjectURL,
+		});
+
+		attachments.load();
+		await expect(attachments.restoreImagePreviews()).resolves.toEqual({
+			restoredIds: ['stored-image'],
+			missingIds: [],
+		});
+		expect(attachments.records.value[0]).toMatchObject({
+			id: 'stored-image',
+			previewUrl: 'blob:restored-image',
+			warnings: [],
+		});
+		expect(createObjectURL).toHaveBeenCalledTimes(1);
+	});
 
 	it('accepts a VisionProvider as the image analyzer dependency', async () => {
 		const provider = {
@@ -275,7 +372,7 @@ describe('useAttachments', () => {
 			'比较两张图片',
 			new AbortController().signal,
 		);
-		await Promise.resolve();
+		await vi.waitFor(() => expect(analyzer).toHaveBeenCalledTimes(2));
 		expect(analyzer).toHaveBeenCalledTimes(2);
 		expect(attachments.records.value.map(record => record.status)).toEqual([
 			'analyzing',
@@ -582,7 +679,7 @@ describe('useAttachments', () => {
 		const attachments = useAttachments({
 			storage: new MemoryStorage(),
 			analyzeImage: async () => visionResult(),
-			createObjectURL: file => `blob:${file.name}`,
+			createObjectURL: file => `blob:${(file as File).name}`,
 			revokeObjectURL,
 			createId: () => `preview-${++id}`,
 		});
@@ -629,7 +726,7 @@ describe('useAttachments', () => {
 			storage,
 			analyzeImage: async () => visionResult(),
 			createId: () => (nextId++ === 0 ? 'keep' : 'drop'),
-			createObjectURL: file => `blob:${file.name}`,
+			createObjectURL: file => `blob:${(file as File).name}`,
 			revokeObjectURL,
 		});
 		attachments.queueFiles([

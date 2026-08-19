@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { defineComponent } from 'vue';
+import { defineComponent, nextTick } from 'vue';
+import { ElImage } from 'element-plus';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import MessageContent from './MessageContent.vue';
@@ -64,10 +65,35 @@ describe('MessageContent', () => {
 			alt: '控制台截图',
 		});
 
-		const image = wrapper.get('img');
-		expect(image.attributes('src')).toBe('blob:test-preview');
-		expect(image.attributes('alt')).toBe('控制台截图');
+		const image = wrapper.getComponent(ElImage);
+		expect(image.props('src')).toBe('blob:test-preview');
+		expect(wrapper.get('[role="button"]').attributes('aria-label')).toBe(
+			'预览图片：控制台截图',
+		);
+		expect(image.props('previewSrcList')).toEqual(['blob:test-preview']);
 		expect(wrapper.get('figcaption').text()).toBe('控制台截图');
+	});
+
+	it('opens and closes the image viewer overlay', async () => {
+		const wrapper = renderContent({
+			type: 'image',
+			attachmentId: 'image-preview',
+			previewUrl: 'blob:overlay-preview',
+			alt: '放大预览',
+		});
+		const image = wrapper.getComponent(ElImage);
+		(
+			image.vm.$.exposed as unknown as { showPreview: () => void }
+		).showPreview();
+		await nextTick();
+
+		expect(document.body.querySelector('.el-image-viewer__wrapper')).not.toBeNull();
+		const close = document.body.querySelector<HTMLElement>(
+			'.el-image-viewer__close',
+		);
+		close?.click();
+		await nextTick();
+		expect(document.body.querySelector('.el-image-viewer__wrapper')).toBeNull();
 	});
 
 	it('shows an accessible placeholder when an image has no preview', () => {
@@ -112,7 +138,7 @@ describe('MessageContent', () => {
 			},
 		);
 
-		expect(wrapper.get('img').attributes('src')).toBe(
+		expect(wrapper.getComponent(ElImage).props('src')).toBe(
 			'blob:test-vision-preview',
 		);
 		expect(wrapper.find('[aria-label="图片分析结果"]').exists()).toBe(false);

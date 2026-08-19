@@ -20,11 +20,22 @@
 	</article>
 
 	<figure v-else-if="content.type === 'image'" class="image-content">
-		<img
+		<div
 			v-if="imagePreviewUrl"
-			:src="imagePreviewUrl"
-			:alt="imageName"
-		/>
+			class="image-preview-trigger"
+			role="button"
+			:aria-label="`预览图片：${imageName}`"
+		>
+			<ElImage
+				class="image-preview"
+				:src="imagePreviewUrl"
+				:preview-src-list="[imagePreviewUrl]"
+				:initial-index="0"
+				fit="contain"
+				preview-teleported
+				hide-on-click-modal
+			/>
+		</div>
 		<div
 			v-else
 			class="image-placeholder"
@@ -48,6 +59,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { ElImage } from 'element-plus';
 import Markdown from '../Markdown.vue';
 import type { ChatAttachment } from '../../types/attachment';
 import type {
@@ -139,14 +151,21 @@ const formatFileSize = (size: number) => {
 	margin: 4px 0;
 }
 
-.image-content img,
+.image-preview-trigger,
+.image-preview,
 .image-placeholder {
 	display: block;
 	max-width: 100%;
 	border-radius: 8px;
 }
 
-.image-content img {
+.image-preview {
+	width: auto;
+	max-height: 360px;
+}
+
+.image-preview :deep(img) {
+	max-width: 100%;
 	max-height: 360px;
 	object-fit: contain;
 }

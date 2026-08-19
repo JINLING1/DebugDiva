@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { strFromU8, unzipSync } from 'fflate';
+import { Blob as NodeBlob } from 'node:buffer';
 import type {
 	ChatAttachment,
 	DocumentAttachment,
@@ -9,11 +11,31 @@ import type {
 import type { ChatSession } from '../../types/chat';
 import {
 	collectSessionAttachmentIds,
+	createConversationArchive,
 	createConversationExport,
 	createConversationExportFilename,
 	downloadConversationExport,
 	serializeConversationExport,
 } from './conversationExport';
+import type {
+	ImageBlobRepository,
+	StoredImageBlob,
+} from '../storage/imageBlobStorage';
+
+const imageRepository = (
+	images: StoredImageBlob[] = [],
+): ImageBlobRepository => ({
+	put: vi.fn(),
+	get: vi.fn(async id => images.find(image => image.attachmentId === id)),
+	getMany: vi.fn(async ids => {
+		const selected = new Set(ids);
+		return images.filter(image => selected.has(image.attachmentId));
+	}),
+	delete: vi.fn(),
+	retain: vi.fn(async () => []),
+	clear: vi.fn(),
+	close: vi.fn(),
+});
 
 const summary = {
 	userGoals: ['定位构建问题'],
@@ -125,7 +147,7 @@ describe('conversation export', () => {
 		);
 
 		expect(exported).toMatchObject({
-			schemaVersion: 1,
+			schemaVersion: 2,
 			app: 'DebugDiva',
 			exportedAt: '2026-08-09T08:00:00.000Z',
 			session: {
@@ -183,7 +205,7 @@ describe('conversation export', () => {
 			new Date('2026-08-09T08:00:00.000Z'),
 		);
 
-		expect(filename).toBe('DebugDiva-CON-构建-2026-08-09.json');
+		expect(filename).toBe('DebugDiva-CON-构建-2026-08-09.zip');
 		expect(filename).not.toMatch(/[<>:"/\\|?*]/);
 		expect(filename.length).toBeLessThanOrEqual(100);
 		expect(createConversationExportFilename('CON')).toContain(
@@ -191,7 +213,47 @@ describe('conversation export', () => {
 		);
 	});
 
-	it('downloads through an object URL and always revokes it', () => {
+	it('creates a ZIP with the manifest and only referenced original images', async () => {
+		const repository = imageRepository([
+			{
+				attachmentId: 'image-1',
+				blob: new NodeBlob(['image-one'], { type: 'image/png' }) as unknown as Blob,
+				name: 'error.png',
+				mimeType: 'image/png',
+				size: 9,
+				createdAt: 3,
+			},
+			{
+				attachmentId: 'other-image',
+				blob: new NodeBlob(['other-image'], { type: 'image/png' }) as unknown as Blob,
+				name: 'other.png',
+				mimeType: 'image/png',
+				size: 11,
+				createdAt: 3,
+			},
+		]);
+		const result = await createConversationArchive(
+			sessionFixture(),
+			attachmentsFixture(),
+			new Date('2026-08-09T08:00:00.000Z'),
+			repository,
+		);
+		const entries = unzipSync(result.archive);
+
+		expect(Object.keys(entries).sort()).toEqual([
+			'conversation.json',
+			'images/image-1.png',
+		]);
+		expect(strFromU8(entries['images/image-1.png'])).toBe('image-one');
+		const manifest = strFromU8(entries['conversation.json']);
+		expect(manifest).toContain('"filePath": "images/image-1.png"');
+		expect(manifest).not.toContain('blob:');
+		expect(manifest).not.toContain('base64-secret-payload');
+		expect(manifest).not.toContain('attachment-api-key');
+		expect(result.missingImageIds).toEqual([]);
+	});
+
+	it('downloads through an object URL and always revokes it', async () => {
 		const click = vi
 			.spyOn(HTMLAnchorElement.prototype, 'click')
 			.mockImplementation(() => undefined);
@@ -200,17 +262,18 @@ describe('conversation export', () => {
 			revokeObjectURL: vi.fn(),
 		};
 
-		const result = downloadConversationExport(
+		const result = await downloadConversationExport(
 			sessionFixture(),
 			attachmentsFixture(),
 			new Date('2026-08-09T08:00:00.000Z'),
-			{ documentRef: document, urlApi },
+			{ documentRef: document, urlApi, imageBlobRepository: imageRepository() },
 		);
 
 		expect(result.filename).toBe(
-			'DebugDiva-构建问题 - Vue-2026-08-09.json',
+			'DebugDiva-构建问题 - Vue-2026-08-09.zip',
 		);
 		expect(result.bytes).toBeGreaterThan(0);
+		expect(result.missingImageIds).toEqual(['image-1']);
 		expect(click).toHaveBeenCalledTimes(1);
 		expect(urlApi.createObjectURL).toHaveBeenCalledTimes(1);
 		expect(urlApi.revokeObjectURL).toHaveBeenCalledWith(
@@ -219,7 +282,7 @@ describe('conversation export', () => {
 		expect(document.querySelector('a[download]')).toBeNull();
 	});
 
-	it('revokes the object URL even when the browser click fails', () => {
+	it('revokes the object URL even when the browser click fails', async () => {
 		vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
 			throw new Error('download blocked');
 		});
@@ -228,14 +291,18 @@ describe('conversation export', () => {
 			revokeObjectURL: vi.fn(),
 		};
 
-		expect(() =>
+		await expect(
 			downloadConversationExport(
 				sessionFixture(),
 				attachmentsFixture(),
 				new Date('2026-08-09T08:00:00.000Z'),
-				{ documentRef: document, urlApi },
+				{
+					documentRef: document,
+					urlApi,
+					imageBlobRepository: imageRepository(),
+				},
 			),
-		).toThrow('download blocked');
+		).rejects.toThrow('download blocked');
 		expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:failed-export');
 		expect(document.querySelector('a[download]')).toBeNull();
 	});

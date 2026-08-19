@@ -90,14 +90,19 @@ const handleDelete = (id: string) => {
   deleteSession(id);
 };
 
-const handleExport = (session: ChatSession) => {
+const handleExport = async (session: ChatSession) => {
   try {
     const attachmentResult = loadAttachmentResults(localStorage);
-    downloadConversationExport(session, attachmentResult.attachments);
+    const downloadResult = await downloadConversationExport(
+      session,
+      attachmentResult.attachments,
+    );
     if (attachmentResult.recoveredFromError) {
       ElMessage.warning('会话已导出，但部分本地附件记录无法读取。');
+    } else if (downloadResult.missingImageIds.length) {
+      ElMessage.warning('会话 ZIP 已导出，但部分历史图片缺少原图，仅保留了元数据。');
     } else {
-      ElMessage.success('会话 JSON 已导出。');
+      ElMessage.success('会话 ZIP 已导出。');
     }
   } catch (error) {
     console.error('Failed to export conversation:', error);
@@ -108,7 +113,7 @@ const handleExport = (session: ChatSession) => {
 const handleClearAllLocalData = async () => {
   try {
     await ElMessageBox.confirm(
-      '这会删除本机保存的全部会话、历史摘要、附件解析结果、模型设置和主题偏好，且无法撤销。建议先导出需要保留的会话。',
+      '这会删除本机保存的全部会话、历史摘要、附件解析结果、图片原图、模型设置和主题偏好，且无法撤销。建议先导出需要保留的会话。',
       '清除全部本地数据？',
       {
         type: 'warning',
@@ -121,7 +126,7 @@ const handleClearAllLocalData = async () => {
     return;
   }
 
-  const result = clearAllDebugDivaLocalData(localStorage);
+  const result = await clearAllDebugDivaLocalData(localStorage);
   if (!result.ok) {
     console.error('Failed to clear some local data:', result.failed);
     ElMessage.error(
