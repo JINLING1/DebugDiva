@@ -84,7 +84,7 @@ describe('MessageContent', () => {
 		expect(wrapper.text()).toContain('图片暂不可预览');
 	});
 
-	it('renders runtime previews and persisted vision analysis without storing image bytes in the message', () => {
+	it('renders runtime previews without exposing persisted vision analysis', () => {
 		const wrapper = renderContent(
 			{
 				type: 'image',
@@ -115,15 +115,13 @@ describe('MessageContent', () => {
 		expect(wrapper.get('img').attributes('src')).toBe(
 			'blob:test-vision-preview',
 		);
-		expect(wrapper.get('[aria-label="图片分析结果"]').text()).toContain(
-			'图片内容由视觉模型预解析',
-		);
-		expect(wrapper.text()).toContain('终端显示运行时错误');
-		expect(wrapper.text()).toContain('TypeError: undefined');
-		expect(wrapper.text()).toContain('终端、代码编辑器');
+		expect(wrapper.find('[aria-label="图片分析结果"]').exists()).toBe(false);
+		expect(wrapper.text()).not.toContain('终端显示运行时错误');
+		expect(wrapper.text()).not.toContain('TypeError: undefined');
+		expect(wrapper.text()).not.toContain('终端、代码编辑器');
 	});
 
-	it('explains that only analysis text survives after an image preview is gone', () => {
+	it('does not expose cached analysis when an image preview is gone', () => {
 		const wrapper = renderContent(
 			{ type: 'image', attachmentId: 'restored', alt: 'restored.png' },
 			'user',
@@ -140,15 +138,15 @@ describe('MessageContent', () => {
 					objects: [],
 					warnings: [],
 				},
-				warnings: ['原图未保存，已保留分析结果'],
+				warnings: ['原图未保存，仍可继续对话'],
 				createdAt: 1,
 				updatedAt: 2,
 			},
 		);
 
 		expect(wrapper.find('img').exists()).toBe(false);
-		expect(wrapper.text()).toContain('原图未保存，已保留分析结果');
-		expect(wrapper.text()).toContain('已恢复的分析');
+		expect(wrapper.text()).toContain('图片暂不可预览');
+		expect(wrapper.text()).not.toContain('已恢复的分析');
 	});
 
 	it('renders a citation source, page and excerpt', () => {

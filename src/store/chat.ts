@@ -421,6 +421,65 @@ export const useChatStore = defineStore('chat', () => {
 		return { all, active };
 	};
 
+	const resolveAttachmentSelection = (
+		requestedIds: readonly string[],
+		runtimeResults?: readonly ChatAttachment[],
+	) => {
+		const all = runtimeResults
+			? [...runtimeResults]
+			: loadAttachmentResults(localStorage).attachments;
+		const byId = new Map(all.map(attachment => [attachment.id, attachment]));
+		const selected: ChatAttachment[] = [];
+		for (const id of requestedIds) {
+			const attachment = byId.get(id);
+			if (!attachment) {
+				ElMessage.error('附件处理结果已丢失，请移除后重新选择文件。');
+				return null;
+			}
+			if (attachment.kind === 'document') {
+				if (attachment.status !== 'ready') {
+					ElMessage.error(`附件“${attachment.name}”尚未解析完成。`);
+					return null;
+				}
+				if (!attachment.text.trim()) {
+					ElMessage.error(
+						`附件“${attachment.name}”未提取到可用文本，扫描版 PDF 暂不支持 OCR。`,
+					);
+					return null;
+				}
+			} else if (
+				attachment.status === 'uploading' ||
+				attachment.status === 'parsing' ||
+				attachment.status === 'analyzing'
+			) {
+				ElMessage.error(`图片“${attachment.name}”正在处理中。`);
+				return null;
+			}
+			selected.push(attachment);
+		}
+		const knownCharacters = selected.reduce((total, attachment) => {
+			if (attachment.kind === 'document') {
+				return total + Array.from(attachment.text).length;
+			}
+			if (attachment.status !== 'ready' || !attachment.result) return total;
+			return (
+				total +
+				Array.from(
+					[
+						attachment.result.summary,
+						attachment.result.extractedText,
+						...attachment.result.objects,
+					].join('\n'),
+				).length
+			);
+		}, 0);
+		if (knownCharacters > MAX_ACTIVE_ATTACHMENT_TEXT_LENGTH) {
+			ElMessage.error('当前启用的附件文本总计不能超过 80,000 字符。');
+			return null;
+		}
+		return { all, selected };
+	};
+
 	const getMessageAttachmentIds = (message: ChatMessage): string[] =>
 			normalizeAttachmentIds(
 			message.contents
@@ -453,6 +512,7 @@ export const useChatStore = defineStore('chat', () => {
 		updateIndex,
 		attachmentIds,
 		attachmentResults,
+		prepareAttachments,
 	}: ChatParams = {}) => {
 		if (isAssistantTyping.value) {
 			ElMessage.warning('AI正在输出，请稍后再试。');
@@ -493,16 +553,11 @@ export const useChatStore = defineStore('chat', () => {
 			activeAttachmentIds.value = [...requestAttachmentIds];
 		}
 
-		const attachmentContext = resolveAttachmentContext(
+		const initialAttachmentSelection = resolveAttachmentSelection(
 			requestAttachmentIds,
 			attachmentResults,
 		);
-		if (!attachmentContext) return;
-		const contextOptions = {
-			activeAttachmentIds: requestAttachmentIds,
-			attachmentResults: attachmentContext.all,
-			summary: getCurrentConversationSummary(updateIndex),
-		};
+		if (!initialAttachmentSelection) return;
 
 		if (detectImageGenerationIntent(normalizedInput)) {
 			if (updateIndex !== undefined) {
@@ -521,7 +576,10 @@ export const useChatStore = defineStore('chat', () => {
 				setMessageText(target, IMAGE_GENERATION_UNAVAILABLE_MESSAGE);
 			} else {
 				chatHistory.value.push(
-					createUserMessage(normalizedInput, attachmentContext.active),
+					createUserMessage(
+						normalizedInput,
+						initialAttachmentSelection.selected,
+					),
 					createTextMessage(
 						'assistant',
 						IMAGE_GENERATION_UNAVAILABLE_MESSAGE,
@@ -535,7 +593,6 @@ export const useChatStore = defineStore('chat', () => {
 			return;
 		}
 
-		let requestMessages: ProviderMessage[];
 		let targetIndex: number;
 
 		if (updateIndex !== undefined) {
@@ -545,11 +602,6 @@ export const useChatStore = defineStore('chat', () => {
 				return;
 			}
 
-			requestMessages = buildChatContext(
-				chatHistory.value,
-				updateIndex,
-				contextOptions,
-			);
 			chatHistory.value.splice(updateIndex + 1);
 			target.status = 'pending';
 			target.contents = [];
@@ -560,21 +612,14 @@ export const useChatStore = defineStore('chat', () => {
 			targetIndex = updateIndex;
 		} else {
 			chatHistory.value.push(
-				createUserMessage(normalizedInput, attachmentContext.active),
-			);
-			requestMessages = buildChatContext(
-				chatHistory.value,
-				chatHistory.value.length,
-				contextOptions,
+				createUserMessage(
+					normalizedInput,
+					initialAttachmentSelection.selected,
+				),
 			);
 			chatHistory.value.push(createTextMessage('assistant', '', 'pending'));
 			targetIndex = chatHistory.value.length - 1;
 		}
-
-		requestMessages = [
-			{ role: 'system', content: CHAT_CAPABILITY_SYSTEM_PROMPT },
-			...requestMessages,
-		];
 
 		isAssistantTyping.value = true;
 		assistantMessageIndex = targetIndex;
@@ -584,6 +629,38 @@ export const useChatStore = defineStore('chat', () => {
 		abortController.value = controller;
 
 		try {
+			const preparedResults = prepareAttachments
+				? await prepareAttachments({
+						prompt: normalizedInput,
+						attachmentIds: requestAttachmentIds,
+						signal: controller.signal,
+					})
+				: initialAttachmentSelection.all;
+			const attachmentContext = resolveAttachmentContext(
+				requestAttachmentIds,
+				preparedResults,
+			);
+			if (!attachmentContext) {
+				throw new AppError({
+					code: 'ATTACHMENT_PREPARATION_FAILED',
+					message: '附件处理失败，请重试。',
+					retryable: true,
+				});
+			}
+			const contextOptions = {
+				activeAttachmentIds: requestAttachmentIds,
+				attachmentResults: attachmentContext.all,
+				summary: getCurrentConversationSummary(updateIndex),
+			};
+			const contextEnd = updateIndex ?? chatHistory.value.length - 1;
+			const requestMessages: ProviderMessage[] = [
+				{ role: 'system', content: CHAT_CAPABILITY_SYSTEM_PROMPT },
+				...buildChatContext(
+					chatHistory.value,
+					contextEnd,
+					contextOptions,
+				),
+			];
 			let attempt = 0;
 			while (attempt < 2) {
 				let receivedOutput = false;
@@ -726,6 +803,7 @@ export const useChatStore = defineStore('chat', () => {
 	const handleUpdate = async (
 		index: number,
 		attachmentResults?: ChatAttachment[],
+		prepareAttachments?: ChatParams['prepareAttachments'],
 	) => {
 		const previousUserMessage = chatHistory.value
 			.slice(0, index)
@@ -746,6 +824,7 @@ export const useChatStore = defineStore('chat', () => {
 			updateIndex: index,
 			attachmentIds: getMessageAttachmentIds(previousUserMessage),
 			attachmentResults,
+			prepareAttachments,
 		});
 	};
 

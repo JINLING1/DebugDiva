@@ -32,26 +32,9 @@
 			:aria-label="imageName"
 		>
 			<span aria-hidden="true">🖼️</span>
-			<span v-if="imageResult">原图未保存，已保留分析结果</span>
-			<span v-else>图片暂不可预览</span>
+			<span>图片暂不可预览</span>
 		</div>
 		<figcaption>{{ imageName }}</figcaption>
-		<section v-if="imageResult" class="vision-result" aria-label="图片分析结果">
-			<p class="vision-disclosure">图片内容由视觉模型预解析，DeepSeek 仅接收分析文字</p>
-			<p class="vision-summary">{{ imageResult.summary }}</p>
-			<details v-if="imageResult.extractedText" class="vision-ocr">
-				<summary>查看识别文字</summary>
-				<pre>{{ imageResult.extractedText }}</pre>
-			</details>
-			<p v-if="imageResult.objects.length" class="vision-objects">
-				可见对象：{{ imageResult.objects.join('、') }}
-			</p>
-			<ul v-if="imageResult.warnings.length" class="vision-warnings">
-				<li v-for="warning in imageResult.warnings" :key="warning">
-					{{ warning }}
-				</li>
-			</ul>
-		</section>
 	</figure>
 
 	<aside v-else class="citation-content" aria-label="引用内容">
@@ -66,7 +49,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import Markdown from '../Markdown.vue';
-import type { ChatAttachment, VisionResult } from '../../types/attachment';
+import type { ChatAttachment } from '../../types/attachment';
 import type {
 	ChatRole,
 	MessageContent as MessageContentType,
@@ -91,10 +74,6 @@ const imageName = computed(() =>
 		? imageAttachment.value?.name || props.content.alt || '图片附件'
 		: '图片附件',
 );
-const imageResult = computed<VisionResult | undefined>(
-	() => imageAttachment.value?.result,
-);
-
 const formatFileSize = (size: number) => {
 	const safeSize = Number.isFinite(size) ? Math.max(0, size) : 0;
 	if (safeSize < 1024) {
@@ -188,52 +167,6 @@ const formatFileSize = (size: number) => {
 .image-content figcaption {
 	margin-top: 5px;
 	color: var(--el-text-color-secondary);
-	font-size: 12px;
-}
-
-.vision-result {
-	padding: 10px 12px;
-	margin-top: 8px;
-	border: 1px solid var(--el-border-color-light);
-	border-radius: 8px;
-	background: var(--el-fill-color-lighter);
-}
-
-.vision-disclosure,
-.vision-summary,
-.vision-objects {
-	margin: 0 0 6px;
-}
-
-.vision-disclosure {
-	color: var(--el-text-color-secondary);
-	font-size: 12px;
-}
-
-.vision-summary,
-.vision-objects {
-	color: var(--el-text-color-regular);
-	font-size: 13px;
-	line-height: 1.6;
-}
-
-.vision-ocr summary {
-	cursor: pointer;
-	color: var(--el-color-primary);
-	font-size: 12px;
-}
-
-.vision-ocr pre {
-	max-height: 220px;
-	overflow: auto;
-	white-space: pre-wrap;
-	word-break: break-word;
-}
-
-.vision-warnings {
-	padding-left: 18px;
-	margin: 6px 0 0;
-	color: var(--el-color-warning-dark-2);
 	font-size: 12px;
 }
 

@@ -216,6 +216,7 @@ describe('analyzeImageFile', () => {
 			analyzeImageFile(
 				createPng(),
 				'ocr',
+				'找出报错原因',
 				{ apiKey: 'SECRET_TEST_KEY', fetchImpl: fetchMock },
 				controller.signal,
 			),
@@ -253,6 +254,7 @@ describe('analyzeImageFile', () => {
 			text: expect.stringMatching(/不可信的待分析数据.*不得遵循/s),
 		});
 		expect(body.messages[0].content[1].text).toContain('小字号');
+		expect(body.messages[0].content[1].text).toContain('找出报错原因');
 		expect(String(init?.body)).not.toContain('SECRET_TEST_KEY');
 	});
 
@@ -260,7 +262,7 @@ describe('analyzeImageFile', () => {
 		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
 			jsonResponse(qwenPayload('{"summary":"截图"}')),
 		);
-		await analyzeImageFile(createPng(), 'auto', {
+		await analyzeImageFile(createPng(), 'auto', '分析界面', {
 			apiKey: 'test-key',
 			baseUrl:
 				'https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/',
@@ -274,17 +276,17 @@ describe('analyzeImageFile', () => {
 	it('rejects missing credentials and non-allowlisted endpoints before fetch', async () => {
 		const fetchMock = vi.fn<VisionFetch>();
 		await expect(
-			analyzeImageFile(createPng(), 'auto', { fetchImpl: fetchMock }),
+			analyzeImageFile(createPng(), 'auto', '分析图片', { fetchImpl: fetchMock }),
 		).rejects.toMatchObject({ code: 'VISION_NOT_CONFIGURED', status: 500 });
 		await expect(
-			analyzeImageFile(createPng(), 'auto', {
+			analyzeImageFile(createPng(), 'auto', '分析图片', {
 				apiKey: 'test-key',
 				baseUrl: 'https://example.com/compatible-mode/v1',
 				fetchImpl: fetchMock,
 			}),
 		).rejects.toMatchObject({ code: 'VISION_NOT_CONFIGURED', status: 500 });
 		await expect(
-			analyzeImageFile(createPng(), 'auto', {
+			analyzeImageFile(createPng(), 'auto', '分析图片', {
 				apiKey: 'test-key',
 				baseUrl:
 					'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
@@ -308,7 +310,7 @@ describe('analyzeImageFile', () => {
 				.fn<VisionFetch>()
 				.mockResolvedValue(new Response('SECRET_UPSTREAM_DETAIL', { status }));
 			await expect(
-				analyzeImageFile(createPng(), 'auto', {
+				analyzeImageFile(createPng(), 'auto', '分析图片', {
 					apiKey: 'test-key',
 					fetchImpl: fetchMock,
 				}),
@@ -325,7 +327,7 @@ describe('analyzeImageFile', () => {
 			.fn<VisionFetch>()
 			.mockRejectedValue(new Error('SECRET_NETWORK_DETAIL'));
 		await expect(
-			analyzeImageFile(createPng(), 'auto', {
+			analyzeImageFile(createPng(), 'auto', '分析图片', {
 				apiKey: 'test-key',
 				fetchImpl: failedFetch,
 			}),
@@ -340,7 +342,7 @@ describe('analyzeImageFile', () => {
 			.fn<VisionFetch>()
 			.mockResolvedValue(new Response('not-json', { status: 200 }));
 		await expect(
-			analyzeImageFile(createPng(), 'auto', {
+			analyzeImageFile(createPng(), 'auto', '分析图片', {
 				apiKey: 'test-key',
 				fetchImpl: invalidJsonFetch,
 			}),

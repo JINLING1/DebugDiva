@@ -430,6 +430,124 @@ describe('chat store provider orchestration', () => {
 		expect(localStorage.getItem('debugdiva:sessions:v2')).not.toContain('blob:');
 	});
 
+	it('shows the user turn while image analysis is pending and starts DeepSeek afterward', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const waitingImage = imageAttachment('waiting-image', {
+			status: 'waiting',
+			result: undefined,
+		});
+		let finishPreparation: ((attachments: ImageAttachment[]) => void) | undefined;
+		const prepareAttachments = vi.fn(
+			() =>
+				new Promise<ImageAttachment[]>(resolve => {
+					finishPreparation = resolve;
+				}),
+		);
+
+		const pending = store.handleChat({
+			input: '定位截图中的报错',
+			attachmentIds: ['waiting-image'],
+			attachmentResults: [waitingImage],
+			prepareAttachments,
+		});
+		await Promise.resolve();
+
+		expect(store.chatHistory).toHaveLength(2);
+		expect(store.chatHistory[0]).toMatchObject({ role: 'user' });
+		expect(store.chatHistory[1]).toMatchObject({
+			role: 'assistant',
+			status: 'pending',
+		});
+		expect(store.isAssistantTyping).toBe(true);
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(prepareAttachments).toHaveBeenCalledWith(
+			expect.objectContaining({
+				prompt: '定位截图中的报错',
+				attachmentIds: ['waiting-image'],
+				signal: expect.any(AbortSignal),
+			}),
+		);
+
+		finishPreparation?.([imageAttachment('waiting-image')]);
+		await pending;
+
+		expect(streamSpy).toHaveBeenCalledOnce();
+		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain(
+			'TypeError: undefined',
+		);
+		expect(store.chatHistory[1].status).toBe('completed');
+	});
+
+	it('stops pending image analysis through the shared chat abort signal', async () => {
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+		const waitingImage = imageAttachment('cancel-image', {
+			status: 'waiting',
+			result: undefined,
+		});
+		let receivedSignal: AbortSignal | undefined;
+		const prepareAttachments = vi.fn(
+			({ signal }: { signal: AbortSignal }) =>
+				new Promise<ImageAttachment[]>((_resolve, reject) => {
+					receivedSignal = signal;
+					signal.addEventListener(
+						'abort',
+						() => reject(new DOMException('Aborted', 'AbortError')),
+						{ once: true },
+					);
+				}),
+		);
+
+		const pending = store.handleChat({
+			input: '分析后停止',
+			attachmentIds: ['cancel-image'],
+			attachmentResults: [waitingImage],
+			prepareAttachments,
+		});
+		await Promise.resolve();
+		store.pauseChat();
+		await pending;
+
+		expect(receivedSignal?.aborted).toBe(true);
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory[1]).toMatchObject({ status: 'stopped' });
+	});
+
+	it('keeps the submitted image turn when background analysis fails', async () => {
+		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
+		const store = useChatStore();
+		const waitingImage = imageAttachment('failed-image', {
+			status: 'waiting',
+			result: undefined,
+		});
+
+		await store.handleChat({
+			input: '分析这张失败截图',
+			attachmentIds: ['failed-image'],
+			attachmentResults: [waitingImage],
+			prepareAttachments: async () => {
+				throw new AppError({
+					code: 'VISION_SERVICE_UNAVAILABLE',
+					message: '图片处理暂时失败，请重试',
+					retryable: true,
+				});
+			},
+		});
+
+		expect(streamSpy).not.toHaveBeenCalled();
+		expect(store.chatHistory).toHaveLength(2);
+		expect(store.chatHistory[0]).toMatchObject({ role: 'user' });
+		expect(store.chatHistory[1]).toMatchObject({
+			role: 'assistant',
+			status: 'error',
+			errorCode: 'VISION_SERVICE_UNAVAILABLE',
+		});
+		expect(getMessageText(store.chatHistory[1])).toBe(
+			'图片处理暂时失败，请重试',
+		);
+	});
+
 	it('does not send a chat request while image analysis is unfinished', async () => {
 		const streamSpy = vi.spyOn(DeepSeekChatProvider.prototype, 'stream');
 		const store = useChatStore();

@@ -40,19 +40,6 @@
 				{{ attachment.errorMessage }}
 			</p>
 
-			<p
-				v-if="attachment.kind === 'image' && attachment.result?.summary"
-				class="vision-summary"
-			>
-				{{ attachment.result.summary }}
-			</p>
-			<p
-				v-if="attachment.kind === 'image' && attachment.status === 'ready'"
-				class="vision-disclosure"
-			>
-				图片内容由视觉模型预解析
-			</p>
-
 			<div
 				v-if="isTruncated || displayedWarnings.length"
 				class="attachment-warnings"
@@ -123,9 +110,10 @@ const emit = defineEmits<{
 }>();
 
 const statusLabels: Record<AttachmentStatus, string> = {
+	waiting: '待发送',
 	uploading: '上传中',
 	parsing: '解析中',
-	analyzing: '分析中',
+	analyzing: '正在处理图片',
 	ready: '已就绪',
 	error: '处理失败',
 };
@@ -139,9 +127,6 @@ const isTruncated = computed(
 );
 const displayedWarnings = computed(() => [
 	...props.attachment.warnings,
-	...(props.attachment.kind === 'image'
-		? props.attachment.result?.warnings ?? []
-		: []),
 ]);
 
 const formatFileSize = (size: number) => {
@@ -262,22 +247,6 @@ const formatFileSize = (size: number) => {
 	margin: 5px 0 0;
 	color: var(--el-color-danger);
 	font-size: 12px;
-}
-
-.vision-summary {
-	display: -webkit-box;
-	overflow: hidden;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	margin: 5px 0 0;
-	color: var(--el-text-color-regular);
-	font-size: 12px;
-}
-
-.vision-disclosure {
-	margin: 4px 0 0;
-	color: var(--el-text-color-secondary);
-	font-size: 11px;
 }
 
 .attachment-warnings {

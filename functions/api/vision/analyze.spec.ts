@@ -21,10 +21,16 @@ const createPng = (name = 'screen.png') => {
 	return new File([bytes], name, { type: 'image/png' });
 };
 
-const createRequest = (file: File, task?: string, signal?: AbortSignal) => {
+const createRequest = (
+	file: File,
+	task?: string,
+	signal?: AbortSignal,
+	prompt = '请分析这张图片',
+) => {
 	const formData = new FormData();
 	formData.append('file', file);
 	if (task !== undefined) formData.append('task', task);
+	formData.append('prompt', prompt);
 	return new Request('https://debugdiva.example/api/vision/analyze', {
 		method: 'POST',
 		body: formData,
@@ -102,6 +108,30 @@ describe('POST /api/vision/analyze', () => {
 		const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 		expect(requestBody.model).toBe(DEFAULT_VISION_MODEL);
 		expect(requestBody.messages[0].content[1].text).toContain('综合分析整体场景');
+		expect(requestBody.messages[0].content[1].text).toContain('请分析这张图片');
+	});
+
+	it('requires one bounded prompt before calling Qwen', async () => {
+		const emptyPrompt = await onRequestPost({
+			request: createRequest(createPng(), 'auto', undefined, '   '),
+			env,
+		});
+		expect(emptyPrompt.status).toBe(400);
+		await expect(emptyPrompt.json()).resolves.toMatchObject({
+			error: { code: 'INVALID_VISION_PROMPT', retryable: false },
+		});
+
+		const longPrompt = await onRequestPost({
+			request: createRequest(
+				createPng(),
+				'auto',
+				undefined,
+				'界'.repeat(4_001),
+			),
+			env,
+		});
+		expect(longPrompt.status).toBe(400);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('validates multipart fields, task and file name before analysis', async () => {

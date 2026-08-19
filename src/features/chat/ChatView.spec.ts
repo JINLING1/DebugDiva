@@ -77,6 +77,7 @@ const createAttachmentManager = () => ({
 		recoveredFromError: false,
 	}),
 	queueFiles: vi.fn(),
+	prepareForSend: vi.fn().mockImplementation(async () => []),
 	retry: vi.fn().mockReturnValue(true),
 	cancel: vi.fn().mockReturnValue(true),
 	remove: vi.fn().mockReturnValue(true),

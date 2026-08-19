@@ -11,12 +11,13 @@ import {
 	type AttachmentStorageLike,
 	type LoadAttachmentResultsResult,
 } from '../services/storage/attachmentStorage';
-import type {
-	ChatAttachment,
-	DocumentAttachment,
-	ImageAttachment,
-	ParsedDocument,
-	VisionResult,
+import {
+	MAX_ATTACHMENTS_PER_MESSAGE,
+	type ChatAttachment,
+	type DocumentAttachment,
+	type ImageAttachment,
+	type ParsedDocument,
+	type VisionResult,
 } from '../types/attachment';
 import type { VisionProvider } from '../providers/vision/VisionProvider';
 
@@ -27,6 +28,7 @@ export type AttachmentParser = (
 
 export type ImageAnalyzer = (
 	file: File,
+	prompt: string,
 	signal: AbortSignal,
 ) => Promise<VisionResult>;
 
@@ -112,8 +114,8 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		options.analyzeImage ??
 		options.analyzer ??
 		(options.visionProvider
-			? ((file: File, signal: AbortSignal) =>
-					options.visionProvider!.analyze(file, signal))
+			? ((file: File, prompt: string, signal: AbortSignal) =>
+					options.visionProvider!.analyze(file, prompt, signal))
 			: undefined);
 	const createId = options.createId ?? defaultCreateId;
 	const now = options.now ?? Date.now;
@@ -206,10 +208,29 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		});
 	};
 
-	const processAttachment = async (id: string): Promise<void> => {
+	const processAttachment = async (
+		id: string,
+		prompt?: string,
+		parentSignal?: AbortSignal,
+	): Promise<void> => {
 		const file = files.get(id);
 		const record = records.value.find(item => item.id === id);
-		if (!file || !record || record.status !== 'uploading') return;
+		if (!file || !record) return;
+		if (record.kind === 'document' && record.status !== 'uploading') return;
+		if (
+			record.kind === 'image' &&
+			record.status === 'ready' &&
+			record.result
+		) {
+			return;
+		}
+		if (
+			record.kind === 'image' &&
+			record.status !== 'waiting' &&
+			record.status !== 'error'
+		) {
+			return;
+		}
 
 		const validationError = fileValidationError(file);
 		if (validationError) {
@@ -224,11 +245,18 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 			);
 			return;
 		}
+		if (record.kind === 'image' && !prompt?.trim()) {
+			updateWithError(id, 'INVALID_VISION_PROMPT', '请输入图片相关问题后再发送');
+			return;
+		}
 
 		const previous = controllers.get(id);
 		if (previous) previous.abort();
 		const controller = new AbortController();
 		controllers.set(id, controller);
+		const abortFromParent = () => controller.abort();
+		if (parentSignal?.aborted) controller.abort();
+		else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
 		replaceRecord(id, {
 			status: record.kind === 'image' ? 'analyzing' : 'parsing',
 			errorCode: undefined,
@@ -238,7 +266,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		try {
 			if (record.kind === 'image') {
 				const result = validateVisionResult(
-					await analyzeImage!(file, controller.signal),
+					await analyzeImage!(file, prompt!.trim(), controller.signal),
 				);
 				if (controllers.get(id) !== controller) return;
 				replaceRecord(id, {
@@ -248,6 +276,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 					errorCode: undefined,
 					errorMessage: undefined,
 				});
+				files.delete(id);
 			} else {
 				const result = validateParsedDocument(
 					await parseFile(file, controller.signal),
@@ -282,6 +311,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 				);
 			}
 		} finally {
+			parentSignal?.removeEventListener('abort', abortFromParent);
 			if (controllers.get(id) === controller) controllers.delete(id);
 		}
 	};
@@ -330,7 +360,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 				created.push({
 					id,
 					kind: 'image',
-					status: validationError ? 'error' : 'uploading',
+					status: validationError ? 'error' : 'waiting',
 					name: file.name,
 					mimeType: file.type,
 					size: file.size,
@@ -358,7 +388,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 					updatedAt: createdAt,
 				});
 			}
-			if (!validationError) queued.push(id);
+			if (!validationError && !isImage) queued.push(id);
 		}
 
 		records.value = [...records.value, ...created];
@@ -390,12 +420,63 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		}
 
 		replaceRecord(id, {
-			status: 'uploading',
+			status: record.kind === 'image' ? 'waiting' : 'uploading',
 			errorCode: undefined,
 			errorMessage: undefined,
 		});
-		scheduleProcessing(id);
+		if (record.kind === 'document') scheduleProcessing(id);
 		return true;
+	};
+
+	const prepareForSend = async (
+		ids: readonly string[],
+		prompt: string,
+		signal: AbortSignal,
+	): Promise<ChatAttachment[]> => {
+		const normalizedIds = [...new Set(ids)];
+		if (normalizedIds.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+			throw new AppError({
+				code: 'TOO_MANY_ATTACHMENTS',
+				message: `每条消息最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`,
+				retryable: false,
+			});
+		}
+		const selectedIds = new Set(normalizedIds);
+		const selected = records.value.filter(record => selectedIds.has(record.id));
+		const missingId = normalizedIds.find(
+			id => !selected.some(record => record.id === id),
+		);
+		if (missingId) {
+			throw new AppError({
+				code: 'ATTACHMENT_RESULT_MISSING',
+				message: '附件处理结果已丢失，请重新选择文件',
+				retryable: false,
+			});
+		}
+
+		await Promise.all(
+			selected
+				.filter(
+					(record): record is ImageAttachment =>
+						record.kind === 'image' &&
+						(record.status !== 'ready' || !record.result),
+				)
+				.map(record => processAttachment(record.id, prompt, signal)),
+		);
+
+		if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+		for (const id of normalizedIds) {
+			const record = records.value.find(item => item.id === id);
+			if (!record || record.status !== 'ready') {
+				throw new AppError({
+					code: record?.errorCode ?? 'ATTACHMENT_NOT_READY',
+					message: record?.errorMessage ?? '附件尚未处理完成',
+					retryable: true,
+				});
+			}
+		}
+
+		return [...records.value];
 	};
 
 	const cancel = (id: string): boolean => {
@@ -495,7 +576,15 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 
 	const hasOriginalFile = (id: string): boolean => files.has(id);
 	const releaseOriginalFiles = (ids: readonly string[]): void => {
-		ids.forEach(id => files.delete(id));
+		ids.forEach(id => {
+			const record = records.value.find(item => item.id === id);
+			if (
+				record?.status === 'ready' &&
+				(record.kind === 'document' || Boolean(record.result))
+			) {
+				files.delete(id);
+			}
+		});
 	};
 
 	const dispose = (): void => {
@@ -512,6 +601,7 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		storageError,
 		load,
 		queueFiles,
+		prepareForSend,
 		retry,
 		cancel,
 		remove,

@@ -49,9 +49,10 @@ const createImageAttachment = (
 
 describe('AttachmentCard', () => {
 	it.each([
+		['waiting', '待发送'],
 		['uploading', '上传中'],
 		['parsing', '解析中'],
-		['analyzing', '分析中'],
+		['analyzing', '正在处理图片'],
 		['ready', '已就绪'],
 		['error', '处理失败'],
 	] as const)('shows the %s status', (status, label) => {
@@ -81,35 +82,32 @@ describe('AttachmentCard', () => {
 		);
 	});
 
-	it('shows an image preview, analysis summary and vision disclosure', () => {
+	it('shows an image preview without exposing the analysis result', () => {
 		const wrapper = mount(AttachmentCard, {
 			props: { attachment: createImageAttachment() },
 		});
 
 		expect(wrapper.get('img').attributes('src')).toBe('blob:console-preview');
 		expect(wrapper.get('img').attributes('alt')).toContain('console.png');
-		expect(wrapper.get('.vision-summary').text()).toContain('报错终端');
-		expect(wrapper.get('.vision-disclosure').text()).toBe(
-			'图片内容由视觉模型预解析',
-		);
-		expect(wrapper.get('[aria-label="附件提示"]').text()).toContain(
-			'部分文字可能不完整',
-		);
+		expect(wrapper.text()).not.toContain('报错终端');
+		expect(wrapper.text()).not.toContain('TypeError');
+		expect(wrapper.text()).not.toContain('部分文字可能不完整');
 	});
 
-	it('keeps the analysis visible when a restored image has no preview', () => {
+	it('keeps restored image analysis hidden when no preview is available', () => {
 		const wrapper = mount(AttachmentCard, {
 			props: {
 				attachment: createImageAttachment({
 					previewUrl: undefined,
-					warnings: ['原图未保存，已保留分析结果'],
+					warnings: ['原图未保存，仍可继续对话'],
 				}),
 			},
 		});
 
 		expect(wrapper.find('img').exists()).toBe(false);
 		expect(wrapper.get('.image-thumbnail').text()).toContain('🖼️');
-		expect(wrapper.text()).toContain('原图未保存，已保留分析结果');
+		expect(wrapper.text()).toContain('原图未保存，仍可继续对话');
+		expect(wrapper.text()).not.toContain('一张包含报错终端的截图');
 	});
 
 	it('emits the attachment id for cancel and remove while processing', async () => {

@@ -208,7 +208,11 @@ const attachmentSelectionDisabled = computed(
 		props.attachments.length >= 3,
 );
 const hasUnreadyAttachments = computed(() =>
-	props.attachments.some(attachment => attachment.status !== 'ready'),
+	props.attachments.some(attachment =>
+		attachment.kind === 'image'
+			? attachment.status !== 'waiting' && attachment.status !== 'ready'
+			: attachment.status !== 'ready',
+	),
 );
 const canSend = computed(
 	() => Boolean(input.value.trim()) && !hasUnreadyAttachments.value,

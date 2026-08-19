@@ -1,4 +1,5 @@
 export type AttachmentStatus =
+	| 'waiting'
 	| 'uploading'
 	| 'parsing'
 	| 'analyzing'

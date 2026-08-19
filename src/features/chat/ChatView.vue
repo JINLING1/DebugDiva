@@ -103,6 +103,8 @@ const handleSend = async (text: string) => {
 		input: text,
 		attachmentIds: selectedIds,
 		attachmentResults: attachmentRecords.value,
+		prepareAttachments: ({ prompt, attachmentIds, signal }) =>
+			attachmentManager.prepareForSend(attachmentIds, prompt, signal),
 	});
 	if (chatHistory.value.length > previousMessageCount) {
 		attachmentManager.releaseOriginalFiles(selectedIds);
@@ -162,7 +164,15 @@ const copyMessage = async (messageId: string) => {
 
 const regenerateMessage = (messageId: string) => {
 	const index = chatHistory.value.findIndex(item => item.id === messageId);
-	if (index >= 0) void handleUpdate(index, attachmentRecords.value);
+	if (index >= 0) {
+		void handleUpdate(index, attachmentRecords.value, request =>
+			attachmentManager.prepareForSend(
+				request.attachmentIds,
+				request.prompt,
+				request.signal,
+			),
+		);
+	}
 };
 
 onMounted(() => {

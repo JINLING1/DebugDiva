@@ -4,7 +4,10 @@ import { mount } from '@vue/test-utils';
 import ElementPlus from 'element-plus';
 import { describe, expect, it } from 'vitest';
 import ChatComposer from './ChatComposer.vue';
-import type { DocumentAttachment } from '../../types/attachment';
+import type {
+	DocumentAttachment,
+	ImageAttachment,
+} from '../../types/attachment';
 
 const createAttachment = (
 	id: string,
@@ -18,6 +21,18 @@ const createAttachment = (
 	size: 12,
 	text: status === 'ready' ? 'ready' : '',
 	truncated: false,
+	warnings: [],
+	createdAt: 1,
+	updatedAt: 1,
+});
+
+const createWaitingImage = (): ImageAttachment => ({
+	id: 'waiting-image',
+	kind: 'image',
+	status: 'waiting',
+	name: 'screen.png',
+	mimeType: 'image/png',
+	size: 100,
 	warnings: [],
 	createdAt: 1,
 	updatedAt: 1,
@@ -164,6 +179,17 @@ describe('ChatComposer', () => {
 		await wrapper.setProps({ attachments: [createAttachment('pending', 'ready')] });
 		await wrapper.get('[aria-label="发送消息"]').trigger('click');
 		expect(wrapper.emitted('send')).toEqual([['请分析这个文件']]);
+	});
+
+	it('allows a waiting image to be submitted for background processing', async () => {
+		const wrapper = renderComposer({ attachments: [createWaitingImage()] });
+		await wrapper.get('textarea').setValue('定位截图中的错误');
+
+		expect(wrapper.get('[aria-label="发送消息"]').attributes()).not.toHaveProperty(
+			'disabled',
+		);
+		await wrapper.get('[aria-label="发送消息"]').trigger('click');
+		expect(wrapper.emitted('send')).toEqual([['定位截图中的错误']]);
 	});
 
 	it('renders attachments above the input and forwards attachment actions', async () => {

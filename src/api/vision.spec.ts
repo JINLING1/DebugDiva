@@ -38,6 +38,7 @@ describe('vision API', () => {
 
 		await expect(
 			analyzeVisionImage(file, {
+				prompt: '请分析错误信息',
 				fetchImpl: fetchMock,
 				signal: controller.signal,
 			}),
@@ -51,6 +52,23 @@ describe('vision API', () => {
 		expect(init?.body).toBeInstanceOf(FormData);
 		expect((init?.body as FormData).get('file')).toBe(file);
 		expect((init?.body as FormData).get('task')).toBe('auto');
+		expect((init?.body as FormData).get('prompt')).toBe('请分析错误信息');
+	});
+
+	it('rejects an empty or over-limit prompt before fetch', async () => {
+		const fetchMock = vi.fn<VisionFetch>();
+		const file = new File(['image'], 'error.png', { type: 'image/png' });
+
+		await expect(
+			analyzeVisionImage(file, { prompt: '   ', fetchImpl: fetchMock }),
+		).rejects.toMatchObject({ code: 'INVALID_VISION_PROMPT' });
+		await expect(
+			analyzeVisionImage(file, {
+				prompt: '界'.repeat(4_001),
+				fetchImpl: fetchMock,
+			}),
+		).rejects.toMatchObject({ code: 'INVALID_VISION_PROMPT' });
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('forwards an explicit analysis task', async () => {
@@ -59,7 +77,11 @@ describe('vision API', () => {
 			.mockResolvedValue(jsonResponse({ data: validResult }));
 		const file = new File(['image'], 'error.webp', { type: 'image/webp' });
 
-		await analyzeVisionImage(file, { fetchImpl: fetchMock, task: 'ocr' });
+		await analyzeVisionImage(file, {
+			prompt: '提取全部文字',
+			fetchImpl: fetchMock,
+			task: 'ocr',
+		});
 
 		const body = fetchMock.mock.calls[0][1]?.body as FormData;
 		expect(body.get('task')).toBe('ocr');
@@ -75,16 +97,20 @@ describe('vision API', () => {
 
 		await expect(
 			analyzeVisionImage(new File([], 'empty.png', { type: 'image/png' }), {
+				prompt: '分析图片',
 				fetchImpl: fetchMock,
 			}),
 		).rejects.toMatchObject({ code: 'EMPTY_FILE' });
 		await expect(
-			analyzeVisionImage(oversized, { fetchImpl: fetchMock }),
+			analyzeVisionImage(oversized, {
+				prompt: '分析图片',
+				fetchImpl: fetchMock,
+			}),
 		).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
 		await expect(
 			analyzeVisionImage(
 				new File(['gif'], 'animated.gif', { type: 'image/gif' }),
-				{ fetchImpl: fetchMock },
+				{ prompt: '分析图片', fetchImpl: fetchMock },
 			),
 		).rejects.toMatchObject({ code: 'UNSUPPORTED_IMAGE_TYPE' });
 		expect(fetchMock).not.toHaveBeenCalled();
@@ -107,6 +133,7 @@ describe('vision API', () => {
 		);
 
 		const structuredPromise = analyzeVisionImage(file, {
+			prompt: '分析图片',
 			fetchImpl: structuredFetch,
 		});
 		await expect(structuredPromise).rejects.toBeInstanceOf(AppError);
@@ -122,7 +149,10 @@ describe('vision API', () => {
 			.fn<VisionFetch>()
 			.mockResolvedValue(new Response('unavailable', { status: 503 }));
 		await expect(
-			analyzeVisionImage(file, { fetchImpl: fallbackFetch }),
+			analyzeVisionImage(file, {
+				prompt: '分析图片',
+				fetchImpl: fallbackFetch,
+			}),
 		).rejects.toMatchObject({
 			code: 'VISION_SERVICE_UNAVAILABLE',
 			status: 503,
@@ -152,7 +182,10 @@ describe('vision API', () => {
 				.fn<VisionFetch>()
 				.mockResolvedValue(jsonResponse({ data: payload }));
 			await expect(
-				analyzeVisionImage(file, { fetchImpl: fetchMock }),
+				analyzeVisionImage(file, {
+					prompt: '分析图片',
+					fetchImpl: fetchMock,
+				}),
 			).rejects.toMatchObject({ code: 'INVALID_VISION_RESPONSE' });
 		}
 	});
@@ -165,7 +198,7 @@ describe('vision API', () => {
 		await expect(
 			analyzeVisionImage(
 				new File(['image'], 'simple.png', { type: 'image/png' }),
-				{ fetchImpl: fetchMock },
+				{ prompt: '分析图片', fetchImpl: fetchMock },
 			),
 		).resolves.toEqual({
 			summary: 'A simple image',
@@ -184,7 +217,7 @@ describe('vision API', () => {
 		await expect(
 			analyzeVisionImage(
 				new File(['image'], 'emoji.png', { type: 'image/png' }),
-				{ fetchImpl: fetchMock },
+				{ prompt: '分析图片', fetchImpl: fetchMock },
 			),
 		).resolves.toMatchObject({ summary });
 	});
@@ -195,13 +228,19 @@ describe('vision API', () => {
 			.fn<VisionFetch>()
 			.mockRejectedValue(new TypeError('offline'));
 		await expect(
-			analyzeVisionImage(file, { fetchImpl: networkFetch }),
+			analyzeVisionImage(file, {
+				prompt: '分析图片',
+				fetchImpl: networkFetch,
+			}),
 		).rejects.toMatchObject({ code: 'VISION_NETWORK_ERROR', retryable: true });
 
 		const abort = new DOMException('Aborted', 'AbortError');
 		const abortFetch = vi.fn<VisionFetch>().mockRejectedValue(abort);
 		await expect(
-			analyzeVisionImage(file, { fetchImpl: abortFetch }),
+			analyzeVisionImage(file, {
+				prompt: '分析图片',
+				fetchImpl: abortFetch,
+			}),
 		).rejects.toBe(abort);
 	});
 });

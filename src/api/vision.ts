@@ -10,6 +10,7 @@ export const MAX_VISION_OBJECTS = 50;
 export const MAX_VISION_OBJECT_LENGTH = 100;
 export const MAX_VISION_WARNINGS = 20;
 export const MAX_VISION_WARNING_LENGTH = 500;
+export const MAX_VISION_PROMPT_LENGTH = 4_000;
 
 export const SUPPORTED_VISION_MIME_TYPES = [
 	'image/jpeg',
@@ -23,6 +24,7 @@ export type VisionFetch = (
 ) => Promise<Response>;
 
 export interface AnalyzeVisionImageOptions {
+	prompt: string;
 	signal?: AbortSignal;
 	task?: VisionTask;
 	fetchImpl?: VisionFetch;
@@ -156,7 +158,7 @@ export const validateVisionResult = (value: unknown): VisionResult => {
 
 export const analyzeVisionImage = async (
 	file: File,
-	options: AnalyzeVisionImageOptions = {},
+	options: AnalyzeVisionImageOptions,
 ): Promise<VisionResult> => {
 	if (file.size === 0) {
 		throw new AppError({
@@ -189,9 +191,19 @@ export const analyzeVisionImage = async (
 		});
 	}
 
+	const prompt = options.prompt.trim();
+	if (!prompt || unicodeLength(prompt) > MAX_VISION_PROMPT_LENGTH) {
+		throw new AppError({
+			code: 'INVALID_VISION_PROMPT',
+			message: `图片问题不能为空且不能超过 ${MAX_VISION_PROMPT_LENGTH} 个字符`,
+			retryable: false,
+		});
+	}
+
 	const formData = new FormData();
 	formData.append('file', file);
 	formData.append('task', task);
+	formData.append('prompt', prompt);
 	const fetchImpl = options.fetchImpl ?? fetch;
 	let response: Response;
 

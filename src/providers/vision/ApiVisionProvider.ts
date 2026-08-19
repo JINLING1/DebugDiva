@@ -7,10 +7,12 @@ export class ApiVisionProvider implements VisionProvider {
 
 	analyze(
 		file: File,
+		prompt: string,
 		signal: AbortSignal,
 		task: VisionTask = 'auto',
 	): Promise<VisionResult> {
 		return analyzeVisionImage(file, {
+			prompt,
 			signal,
 			task,
 			fetchImpl: this.fetchImpl,

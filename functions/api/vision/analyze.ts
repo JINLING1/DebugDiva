@@ -6,6 +6,7 @@ import {
 import {
 	analyzeImageFile,
 	MAX_IMAGE_FILE_SIZE,
+	MAX_VISION_PROMPT_LENGTH,
 	VISION_TIMEOUT_MS,
 	type VisionTask,
 	VisionAnalysisError,
@@ -105,6 +106,21 @@ export const onRequestPost = async ({
 			false,
 		);
 	}
+	const promptFields = formData.getAll('prompt');
+	if (
+		promptFields.length !== 1 ||
+		typeof promptFields[0] !== 'string' ||
+		!promptFields[0].trim() ||
+		Array.from(promptFields[0].trim()).length > MAX_VISION_PROMPT_LENGTH
+	) {
+		return lifecycle.error(
+			'INVALID_VISION_PROMPT',
+			`prompt 必须是非空字符串且不能超过 ${MAX_VISION_PROMPT_LENGTH} 个字符`,
+			400,
+			false,
+		);
+	}
+	const prompt = promptFields[0].trim();
 	lifecycle.setMode(`vision-${taskValue}`);
 
 	const scope = createAbortScope(request.signal, VISION_TIMEOUT_MS);
@@ -112,6 +128,7 @@ export const onRequestPost = async ({
 		const result = await analyzeImageFile(
 			files[0],
 			taskValue,
+			prompt,
 			{
 				apiKey: env.DASHSCOPE_API_KEY,
 				baseUrl: env.DASHSCOPE_BASE_URL,

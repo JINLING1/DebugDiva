@@ -272,6 +272,22 @@ describe('attachment storage', () => {
 		);
 	});
 
+	it('marks a waiting image as unavailable after page restoration', () => {
+		const storage = new MemoryStorage();
+		const waiting = imageAttachment({
+			status: 'waiting',
+			result: undefined,
+		});
+		expect(saveAttachmentResults(storage, [waiting]).ok).toBe(true);
+
+		const [loaded] = loadAttachmentResults(storage).attachments;
+		expect(loaded).toMatchObject({
+			kind: 'image',
+			status: 'error',
+			errorCode: 'ORIGINAL_FILE_UNAVAILABLE',
+		});
+	});
+
 	it('bounds overlong persisted text and adds a visible warning', () => {
 		const storage = new MemoryStorage();
 		storage.setItem(

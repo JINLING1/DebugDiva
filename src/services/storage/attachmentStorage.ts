@@ -33,7 +33,7 @@ const INTERRUPTED_ERROR_MESSAGE =
 	'页面刷新导致文件处理被中断，请重新选择文件后重试';
 const TEXT_TRUNCATED_WARNING = '提取文本已截断至 40,000 字符';
 export const IMAGE_ORIGINAL_NOT_STORED_WARNING =
-	'原图未保存，已保留分析结果';
+	'原图未保存，仍可继续对话';
 
 export interface AttachmentStorageLike {
 	getItem(key: string): string | null;
@@ -69,6 +69,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isAttachmentStatus = (value: unknown): value is AttachmentStatus =>
+	value === 'waiting' ||
 	value === 'uploading' ||
 	value === 'parsing' ||
 	value === 'analyzing' ||
@@ -177,6 +178,10 @@ export const normalizeDocumentAttachment = (
 		status = 'error';
 		errorCode = INTERRUPTED_ERROR_CODE;
 		errorMessage = INTERRUPTED_ERROR_MESSAGE;
+	} else if (status === 'waiting') {
+		status = 'error';
+		errorCode = 'INVALID_ATTACHMENT_STATUS';
+		errorMessage = '附件状态无效，请重新选择文件';
 	} else if (!isAttachmentStatus(value.status)) {
 		errorCode = 'INVALID_ATTACHMENT_STATUS';
 		errorMessage = '附件状态无效，请重新选择文件';
@@ -266,6 +271,11 @@ export const normalizeImageAttachment = (
 	}
 
 	const result = normalizeVisionResult(value.result);
+	if (wasRestored && status === 'waiting') {
+		status = 'error';
+		errorCode = 'ORIGINAL_FILE_UNAVAILABLE';
+		errorMessage = '原始图片未保留，请重新选择图片';
+	}
 	if (status === 'ready' && !result) {
 		status = 'error';
 		errorCode = 'INVALID_VISION_RESULT';

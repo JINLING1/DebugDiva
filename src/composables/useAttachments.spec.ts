@@ -164,19 +164,29 @@ describe('useAttachments', () => {
 			});
 			const file = new File(['pixels'], 'screenshot.png', { type: mimeType });
 
-			attachments.queueFiles([file]);
+			const ids = attachments.queueFiles([file]);
 			expect(attachments.records.value[0]).toMatchObject({
 				kind: 'image',
-				status: 'uploading',
+				status: 'waiting',
 				previewUrl: 'blob:runtime-preview',
 			});
+			expect(analyzer).not.toHaveBeenCalled();
+			const pending = attachments.prepareForSend(
+				ids,
+				'分析截图中的错误',
+				new AbortController().signal,
+			);
 			await Promise.resolve();
 			expect(attachments.records.value[0].status).toBe('analyzing');
-			expect(analyzer).toHaveBeenCalledWith(file, expect.any(AbortSignal));
+			expect(analyzer).toHaveBeenCalledWith(
+				file,
+				'分析截图中的错误',
+				expect.any(AbortSignal),
+			);
 			expect(parser).not.toHaveBeenCalled();
 
 			finishAnalysis?.(visionResult());
-			await flushAsyncWork();
+			await pending;
 			expect(attachments.records.value[0]).toMatchObject({
 				kind: 'image',
 				status: 'ready',
@@ -199,14 +209,111 @@ describe('useAttachments', () => {
 		});
 		const file = new File(['pixels'], 'screen.png', { type: 'image/png' });
 
-		attachments.queueFiles([file]);
-		await flushAsyncWork();
+		const ids = attachments.queueFiles([file]);
+		expect(provider.analyze).not.toHaveBeenCalled();
+		await attachments.prepareForSend(
+			ids,
+			'解释截图',
+			new AbortController().signal,
+		);
 
 		expect(provider.analyze).toHaveBeenCalledWith(
 			file,
+			'解释截图',
 			expect.any(AbortSignal),
 		);
 		expect(attachments.records.value[0].status).toBe('ready');
+	});
+
+	it('reuses the first cached image result without another analysis call', async () => {
+		const analyzer = vi.fn<ImageAnalyzer>().mockResolvedValue(visionResult());
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createId: () => 'cached-image',
+		});
+		const ids = attachments.queueFiles([
+			new File(['pixels'], 'screen.png', { type: 'image/png' }),
+		]);
+
+		await attachments.prepareForSend(
+			ids,
+			'第一次问题',
+			new AbortController().signal,
+		);
+		await attachments.prepareForSend(
+			ids,
+			'后续问题',
+			new AbortController().signal,
+		);
+
+		expect(analyzer).toHaveBeenCalledTimes(1);
+		expect(analyzer.mock.calls[0][1]).toBe('第一次问题');
+	});
+
+	it('starts all selected image analyses before waiting for their results', async () => {
+		const resolvers: Array<(result: VisionResult) => void> = [];
+		const analyzer = vi.fn<ImageAnalyzer>(
+			() =>
+				new Promise(resolve => {
+					resolvers.push(resolve);
+				}),
+		);
+		let nextId = 0;
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createId: () => `parallel-${++nextId}`,
+		});
+		const ids = attachments.queueFiles([
+			new File(['one'], 'one.png', { type: 'image/png' }),
+			new File(['two'], 'two.webp', { type: 'image/webp' }),
+		]);
+
+		const pending = attachments.prepareForSend(
+			ids,
+			'比较两张图片',
+			new AbortController().signal,
+		);
+		await Promise.resolve();
+		expect(analyzer).toHaveBeenCalledTimes(2);
+		expect(attachments.records.value.map(record => record.status)).toEqual([
+			'analyzing',
+			'analyzing',
+		]);
+
+		resolvers.forEach(resolve => resolve(visionResult()));
+		await pending;
+		expect(attachments.records.value.map(record => record.status)).toEqual([
+			'ready',
+			'ready',
+		]);
+	});
+
+	it('rejects more than three attachments before image analysis', async () => {
+		const analyzer = vi.fn<ImageAnalyzer>().mockResolvedValue(visionResult());
+		let nextId = 0;
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			analyzeImage: analyzer,
+			createId: () => `limit-${++nextId}`,
+		});
+		const ids = attachments.queueFiles(
+			Array.from(
+				{ length: 4 },
+				(_, index) =>
+					new File(['image'], `${index}.png`, { type: 'image/png' }),
+			),
+		);
+
+		await expect(
+			attachments.prepareForSend(
+				ids,
+				'分析图片',
+				new AbortController().signal,
+			),
+		).rejects.toMatchObject({ code: 'TOO_MANY_ATTACHMENTS' });
+		expect(analyzer).not.toHaveBeenCalled();
 	});
 
 	it('rejects unsupported image MIME types before analysis', async () => {
@@ -406,12 +513,23 @@ describe('useAttachments', () => {
 			createId: () => 'retry-image',
 		});
 		const file = new File(['pixels'], 'screen.png', { type: 'image/png' });
-		attachments.queueFiles([file]);
-		await flushAsyncWork();
+		const ids = attachments.queueFiles([file]);
+		await expect(
+			attachments.prepareForSend(
+				ids,
+				'分析图片',
+				new AbortController().signal,
+			),
+		).rejects.toMatchObject({ code: 'VISION_ANALYSIS_FAILED' });
 		expect(attachments.records.value[0].status).toBe('error');
 
 		expect(attachments.retry('retry-image')).toBe(true);
-		await flushAsyncWork();
+		expect(attachments.records.value[0].status).toBe('waiting');
+		await attachments.prepareForSend(
+			ids,
+			'分析图片',
+			new AbortController().signal,
+		);
 
 		expect(analyzer).toHaveBeenCalledTimes(2);
 		expect(analyzer.mock.calls[0][0]).toBe(file);
@@ -582,10 +700,14 @@ describe('useAttachments', () => {
 			revokeObjectURL,
 			createId: () => 'release-image',
 		});
-		attachments.queueFiles([
+		const ids = attachments.queueFiles([
 			new File(['pixels'], 'screen.png', { type: 'image/png' }),
 		]);
-		await flushAsyncWork();
+		await attachments.prepareForSend(
+			ids,
+			'分析图片',
+			new AbortController().signal,
+		);
 
 		attachments.releaseOriginalFiles(['release-image']);
 

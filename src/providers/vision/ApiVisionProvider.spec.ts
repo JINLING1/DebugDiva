@@ -24,7 +24,7 @@ describe('ApiVisionProvider', () => {
 		const controller = new AbortController();
 
 		await expect(
-			provider.analyze(file, controller.signal, 'describe'),
+			provider.analyze(file, '解释这个错误', controller.signal, 'describe'),
 		).resolves.toEqual(result);
 
 		const [url, init] = fetchMock.mock.calls[0];
@@ -33,6 +33,7 @@ describe('ApiVisionProvider', () => {
 		const formData = init?.body as FormData;
 		expect(formData.get('file')).toBe(file);
 		expect(formData.get('task')).toBe('describe');
+		expect(formData.get('prompt')).toBe('解释这个错误');
 	});
 
 	it('uses auto as the default task', async () => {
@@ -43,6 +44,7 @@ describe('ApiVisionProvider', () => {
 
 		await provider.analyze(
 			new File(['image'], 'screen.png', { type: 'image/png' }),
+			'分析图片',
 			new AbortController().signal,
 		);
 

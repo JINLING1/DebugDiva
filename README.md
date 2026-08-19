@@ -13,7 +13,7 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 - 停止生成保留部分内容；仅在尚未输出内容时对可重试 5xx 自动重试一次。
 - Chat / Vision Provider 抽象与服务端模型白名单，浏览器只能提交 `fast`、`deep`、`quality`。
 - 文本、PDF、DOCX 在 Pages Function 中解析；原始文件不进入 localStorage。
-- 图片先由千问 `qwen3.6-flash` 转为描述、OCR 和对象列表，再把纯文本结果交给 DeepSeek。
+- 用户发送图片问题后，后台由千问 `qwen3.6-flash` 提取描述、OCR 和对象信息，再把纯文本结果交给 DeepSeek；界面只展示最终回答。
 - 长对话使用结构化摘要 + 最近消息，摘要失败不阻塞当前聊天。
 - 版本化 localStorage、容量上限、损坏数据保护、孤儿附件回收。
 - 统一错误协议、`requestId`、超时、取消和脱敏日志，服务端不记录完整提示词或文件正文。
@@ -71,7 +71,7 @@ flowchart LR
 
 1. 聊天：组件事件 → Pinia → `DeepSeekChatProvider` → `/api/chat` → SSE 增量渲染。
 2. 文档：浏览器临时上传原文件 → `/api/files/parse` → 返回提取文本 → 作为附件上下文注入聊天。
-3. 图片：浏览器临时上传原图 → `/api/vision/analyze` → 千问返回结构化文字分析 → DeepSeek 只接收文字。
+3. 图片：浏览器选择原图并输入问题 → 发送后调用 `/api/vision/analyze` → 千问返回结构化文字分析 → DeepSeek 只接收文字并生成最终回答。
 4. 摘要：对话超过阈值后后台调用 `/api/summarize`；下一轮上下文按“能力指令 → 摘要 → 激活附件 → 最近消息”组装。
 
 ## 目录与职责
@@ -132,7 +132,7 @@ git diff --check
 | --- | --- | --- |
 | `POST /api/chat` | JSON：messages、mode、匿名 clientId | 校验并安全映射模式，代理 DeepSeek SSE |
 | `POST /api/files/parse` | multipart：file | 解析文本、PDF、DOCX，返回纯文本和元数据 |
-| `POST /api/vision/analyze` | multipart：file、task | 校验图片并调用千问 `qwen3.6-flash` |
+| `POST /api/vision/analyze` | multipart：file、task、prompt | 校验图片和用户问题并调用千问 `qwen3.6-flash` |
 | `POST /api/summarize` | JSON：精简消息、previousSummary、匿名 clientId | 使用固定快速模式生成结构化摘要 |
 
 统一错误体：
@@ -162,7 +162,7 @@ debugdiva:summaries:v1
 ```
 
 - 原始 `File`、Blob、Object URL、图片 Base64 和 API Key 永不持久化。
-- 刷新后保留文档提取文本和图片分析文字；图片会提示“原图未保存”。
+- 刷新后保留文档提取文本和内部图片理解缓存；界面不展示视觉模型的中间结果。
 - 会话加载失败时保留源键原始值，不用空数据覆盖关联摘要或附件记录。
 - localStorage 是当前浏览器、当前设备的数据，不是账户云存储，也不会跨设备同步。
 - 会话可导出 JSON；文件只包含该会话实际引用的数据，仍可能包含聊天正文、推理文本、文档提取内容和 OCR，分享前应自行检查。
@@ -192,7 +192,7 @@ Cloudflare Pages 的构建、Functions 和服务端配置见 [部署说明](docs
 - PDF 最多 50 页；扫描 PDF 没有专业 OCR；加密文档、XLSX、PPTX、ZIP / RAR 不支持。
 - DOCX 仅提取主要 XML 文本，展开 XML 上限 5MB，不处理宏、图片或外链。
 - 图片仅支持 JPEG / PNG / WebP；最大边长 4096，总像素不超过 16,777,216；不支持 GIF。
-- 原图不持久化，刷新后只能查看视觉分析文字，不能恢复缩略图。
+- 原图不持久化，刷新后不能恢复缩略图，但已缓存的图片理解上下文仍可供后续对话使用。
 - 会话约 4MB、附件解析结果约 2MB、摘要约 512KB、设置约 16KB，达到上限后需导出并清理。
 - Cloudflare `request.formData()` 在请求缺少可信 `Content-Length` 时会先解析 multipart，再按 `File.size` 二次拒绝；生产环境仍依赖平台请求上限作为第一道保护。
 - 当前前端主包仍较大，Vite 构建会提示 chunk 超过 500KB；后续可按路由和 Markdown / 解析依赖做按需加载。
