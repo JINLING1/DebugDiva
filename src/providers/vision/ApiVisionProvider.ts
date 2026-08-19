@@ -1,17 +1,35 @@
 import { analyzeVisionImage, type VisionFetch } from '../../api/vision';
+import {
+	prepareVisionImageForAnalysis,
+	type VisionImagePreparationOptions,
+} from '../../services/images/prepareVisionImage';
 import type { VisionResult } from '../../types/attachment';
 import type { VisionProvider, VisionTask } from './VisionProvider';
 
-export class ApiVisionProvider implements VisionProvider {
-	constructor(private readonly fetchImpl: VisionFetch = fetch) {}
+export type VisionImagePreparer = (
+	file: File,
+	options: VisionImagePreparationOptions,
+) => Promise<File>;
 
-	analyze(
+export class ApiVisionProvider implements VisionProvider {
+	constructor(
+		private readonly fetchImpl: VisionFetch = fetch,
+		private readonly prepareImage: VisionImagePreparer =
+			prepareVisionImageForAnalysis,
+	) {}
+
+	async analyze(
 		file: File,
 		prompt: string,
 		signal: AbortSignal,
 		task: VisionTask = 'auto',
 	): Promise<VisionResult> {
-		return analyzeVisionImage(file, {
+		const preparedFile = await this.prepareImage(file, {
+			prompt,
+			task,
+			signal,
+		});
+		return analyzeVisionImage(preparedFile, {
 			prompt,
 			signal,
 			task,

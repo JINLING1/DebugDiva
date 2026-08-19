@@ -86,6 +86,9 @@ describe('MessageItem', () => {
 		expect(wrapper.get('.error-status').text()).toBe(
 			'请求失败 · ID req-visible',
 		);
+		expect(wrapper.get('.error-status .status-dot').attributes('aria-hidden')).toBe(
+			'true',
+		);
 	});
 
 	it('emits the message id when copying or regenerating a completed reply', async () => {

@@ -37,6 +37,7 @@
 				v-else-if="message.status === 'error'"
 				class="message-status error-status"
 			>
+				<span class="status-dot" aria-hidden="true"></span>
 				请求失败<span v-if="message.requestId"> · ID {{ message.requestId }}</span>
 			</span>
 
@@ -189,17 +190,35 @@ const showActions = computed(
 }
 
 .message-status {
-	display: inline-block;
-	margin: 4px 20px 8px;
+	display: inline-flex;
+	width: fit-content;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 20px 8px;
+	padding: 3px 8px;
+	border: 1px solid transparent;
+	border-radius: 999px;
 	font-size: 12px;
+	line-height: 1.4;
 }
 
 .stopped-status {
+	border-color: var(--el-border-color-light);
+	background: var(--el-fill-color-light);
 	color: var(--el-text-color-secondary);
 }
 
 .error-status {
+	border-color: var(--el-color-danger-light-7);
+	background: var(--el-color-danger-light-9);
 	color: var(--el-color-danger);
+}
+
+.status-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentcolor;
 }
 
 .message-actions {

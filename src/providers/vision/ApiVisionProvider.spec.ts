@@ -51,4 +51,25 @@ describe('ApiVisionProvider', () => {
 		const formData = fetchMock.mock.calls[0][1]?.body as FormData;
 		expect(formData.get('task')).toBe('auto');
 	});
+
+	it('uploads only the temporary analysis copy returned by the image preparer', async () => {
+		const fetchMock = vi.fn<VisionFetch>().mockResolvedValue(
+			new Response(JSON.stringify({ data: result }), { status: 200 }),
+		);
+		const original = new File(['original'], 'scene.jpg', { type: 'image/jpeg' });
+		const prepared = new File(['resized'], 'scene.jpg', { type: 'image/jpeg' });
+		const prepareImage = vi.fn().mockResolvedValue(prepared);
+		const provider = new ApiVisionProvider(fetchMock, prepareImage);
+		const signal = new AbortController().signal;
+
+		await provider.analyze(original, '描述这张照片', signal);
+
+		expect(prepareImage).toHaveBeenCalledWith(original, {
+			prompt: '描述这张照片',
+			task: 'auto',
+			signal,
+		});
+		const formData = fetchMock.mock.calls[0][1]?.body as FormData;
+		expect(formData.get('file')).toBe(prepared);
+	});
 });

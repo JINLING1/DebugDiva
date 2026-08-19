@@ -4,8 +4,8 @@ export const MAX_IMAGE_PIXELS = 16_777_216;
 export const DEFAULT_VISION_MODEL = 'qwen3.6-flash';
 export const DEFAULT_DASHSCOPE_BASE_URL =
 	'https://dashscope.aliyuncs.com/compatible-mode/v1';
-export const VISION_TIMEOUT_MS = 60_000;
-export const VISION_MAX_OUTPUT_TOKENS = 16_384;
+export const VISION_TIMEOUT_MS = 120_000;
+export const VISION_MAX_OUTPUT_TOKENS = 8_192;
 export const MAX_VISION_PROMPT_LENGTH = 4_000;
 
 export type VisionTask = 'describe' | 'ocr' | 'auto';
