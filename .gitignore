@@ -5,3 +5,10 @@ node_modules
 .dev.vars
 .dev.vars.*
 dist
+coverage
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

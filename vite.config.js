@@ -145,10 +145,8 @@ const deepSeekDevProxy = env => ({
 				const result = await chatRequest({
 					request: webRequest,
 					env: {
-						DEEPSEEK_API_KEY:
-							env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY,
-						DEEPSEEK_BASE_URL:
-							env.DEEPSEEK_BASE_URL || env.VITE_DEEPSEEK_BASE_URL,
+						DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
+						DEEPSEEK_BASE_URL: env.DEEPSEEK_BASE_URL,
 					},
 				});
 				await writeWebResponse(response, result);
@@ -345,10 +343,8 @@ const summarizeDevProxy = env => ({
 				const result = await summarizeRequest({
 					request: webRequest,
 					env: {
-						DEEPSEEK_API_KEY:
-							env.DEEPSEEK_API_KEY || env.VITE_DEEPSEEK_API_KEY,
-						DEEPSEEK_BASE_URL:
-							env.DEEPSEEK_BASE_URL || env.VITE_DEEPSEEK_BASE_URL,
+						DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
+						DEEPSEEK_BASE_URL: env.DEEPSEEK_BASE_URL,
 					},
 				});
 				if (response.destroyed) return;
