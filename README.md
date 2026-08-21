@@ -4,6 +4,20 @@ DebugDiva v2 是一个基于 Vue 3、TypeScript、Pinia 和 Cloudflare Pages Fun
 
 项目采用可替换 Provider、统一消息协议和明确的前后端安全边界，并通过浏览器持久化与自动化测试保证复杂交互的可维护性。
 
+## 界面预览
+
+### 流式对话与代码渲染
+
+![DebugDiva 对话界面，展示会话列表、代码高亮和聊天输入区](docs/screenshots/chat-overview.png)
+
+### 文档内容分析
+
+![DebugDiva 文档分析界面，展示 PDF 附件和结构化回答](docs/screenshots/document-analysis.png)
+
+### 图片理解
+
+![DebugDiva 图片理解界面，展示图片预览和最终回答](docs/screenshots/image-understanding.png)
+
 ## 技术设计
 
 - Vue 3、TypeScript、Pinia 与 Composition API，组件边界清晰。
