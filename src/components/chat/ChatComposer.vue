@@ -117,6 +117,7 @@ const props = withDefaults(
 const emit = defineEmits<{
 	send: [text: string];
 	stop: [];
+	expandedChange: [expanded: boolean];
 	selectFiles: [files: File[]];
 	retryAttachment: [attachmentId: string];
 	cancelAttachment: [attachmentId: string];
@@ -227,12 +228,18 @@ const attachmentTooltip = computed(() => {
 watch(
 	() => props.hasMessages,
 	hasMessages => {
-		if (!hasMessages) expanded.value = false;
+		if (!hasMessages) {
+			expanded.value = false;
+			emit('expandedChange', false);
+		}
 	},
 );
 
 const expandComposer = () => {
-	if (!props.hasMessages) expanded.value = true;
+	if (!props.hasMessages && !expanded.value) {
+		expanded.value = true;
+		emit('expandedChange', true);
+	}
 };
 
 const submit = (value = input.value) => {

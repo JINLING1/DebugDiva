@@ -44,6 +44,7 @@ const ChatComposerStub = defineComponent({
 	emits: [
 		'send',
 		'stop',
+		'expandedChange',
 		'selectFiles',
 		'modelChange',
 		'retryAttachment',
@@ -52,6 +53,7 @@ const ChatComposerStub = defineComponent({
 	],
 	template: `
 		<div data-testid="composer">
+			<button class="expand" @click="$emit('expandedChange', true)">expand</button>
 			<button class="send" @click="$emit('send', 'mock question')">send</button>
 			<button class="stop" @click="$emit('stop')">stop</button>
 			<button class="mode" @click="$emit('modelChange', 'deep')">mode</button>
@@ -131,6 +133,22 @@ describe('ChatWindow', () => {
 		expect(wrapper.emitted('send')).toEqual([['mock question']]);
 		expect(wrapper.emitted('stop')).toEqual([[]]);
 		expect(wrapper.emitted('modelChange')).toEqual([['deep']]);
+	});
+
+	it('moves the empty welcome content when suggestions expand', async () => {
+		const wrapper = renderWindow({ messages: [] });
+
+		expect(wrapper.classes()).not.toContain('empty-composer-expanded');
+		expect(wrapper.get('.welcome-wrapper').classes()).not.toContain(
+			'composer-expanded',
+		);
+
+		await wrapper.get('.expand').trigger('click');
+
+		expect(wrapper.classes()).toContain('empty-composer-expanded');
+		expect(wrapper.get('.welcome-wrapper').classes()).toContain(
+			'composer-expanded',
+		);
 	});
 
 	it('passes attachments to the composer and forwards their actions', async () => {

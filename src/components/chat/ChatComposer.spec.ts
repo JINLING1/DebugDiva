@@ -111,6 +111,7 @@ describe('ChatComposer', () => {
 
 		await wrapper.get('textarea').trigger('click');
 		expect(wrapper.get('.composer-layer').classes()).toContain('expanded');
+		expect(wrapper.emitted('expandedChange')).toEqual([[true]]);
 
 		await wrapper.setProps({ hasMessages: true });
 		expect(wrapper.get('.composer-layer').classes()).toContain('dialog');

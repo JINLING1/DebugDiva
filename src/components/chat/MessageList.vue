@@ -1,6 +1,10 @@
 <template>
 	<section ref="listRef" class="message-list" aria-label="消息列表">
-		<div v-if="messages.length === 0" class="welcome-wrapper">
+		<div
+			v-if="messages.length === 0"
+			class="welcome-wrapper"
+			:class="{ 'composer-expanded': composerExpanded }"
+		>
 			<div class="welcome-message">
 				<div class="welcome-avatar">
 					<img src="/robot.svg" alt="Assistant Avatar" class="avatar" />
@@ -52,8 +56,9 @@ const props = withDefaults(
 	defineProps<{
 		messages: ChatMessage[];
 		attachmentResults?: ChatAttachment[];
+		composerExpanded?: boolean;
 	}>(),
-	{ attachmentResults: () => [] },
+	{ attachmentResults: () => [], composerExpanded: false },
 );
 
 const emit = defineEmits<{
@@ -155,6 +160,11 @@ onBeforeUnmount(() => {
 	width: 100%;
 	height: 100%;
 	padding: 24px 20px 190px;
+	transition: padding-bottom 0.3s ease;
+}
+
+.welcome-wrapper.composer-expanded {
+	padding-bottom: clamp(340px, 34dvh, 420px);
 }
 
 .welcome-message {
@@ -229,6 +239,10 @@ onBeforeUnmount(() => {
 		padding: 16px 16px 170px;
 	}
 
+	.welcome-wrapper.composer-expanded {
+		padding-bottom: clamp(280px, 38dvh, 340px);
+	}
+
 	.welcome-message p {
 		font-size: 14px;
 	}
@@ -237,6 +251,10 @@ onBeforeUnmount(() => {
 @media (max-width: 480px) {
 	.welcome-wrapper {
 		padding-bottom: 150px;
+	}
+
+	.welcome-wrapper.composer-expanded {
+		padding-bottom: clamp(220px, 36dvh, 300px);
 	}
 
 	.welcome-message h1 {

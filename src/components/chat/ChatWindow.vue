@@ -1,8 +1,13 @@
 <template>
-	<section class="chat-window" aria-label="DebugDiva 对话窗口">
+	<section
+		class="chat-window"
+		:class="{ 'empty-composer-expanded': emptyComposerExpanded }"
+		aria-label="DebugDiva 对话窗口"
+	>
 		<MessageList
 			:messages="messages"
 			:attachment-results="attachmentResults"
+			:composer-expanded="emptyComposerExpanded"
 			@copy="emit('copy', $event)"
 			@retry="emit('retry', $event)"
 			@regenerate="emit('regenerate', $event)"
@@ -15,6 +20,7 @@
 			:model-mode="modelMode"
 			@send="emit('send', $event)"
 			@stop="emit('stop')"
+			@expanded-change="emptyComposerExpanded = $event"
 			@select-files="emit('selectFiles', $event)"
 			@retry-attachment="emit('retryAttachment', $event)"
 			@cancel-attachment="emit('cancelAttachment', $event)"
@@ -25,13 +31,14 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue';
 import ChatComposer from './ChatComposer.vue';
 import MessageList from './MessageList.vue';
 import type { ChatAttachment } from '../../types/attachment';
 import type { ChatMessage } from '../../types/chat';
 import type { ModelMode } from '../../types/provider';
 
-withDefaults(
+const props = withDefaults(
 	defineProps<{
 		messages: ChatMessage[];
 		streaming: boolean;
@@ -45,6 +52,15 @@ withDefaults(
 		attachmentResults: () => [],
 		attachmentsDisabled: true,
 		modelMode: 'fast',
+	},
+);
+
+const emptyComposerExpanded = ref(false);
+
+watch(
+	() => props.messages.length,
+	messageCount => {
+		if (messageCount > 0) emptyComposerExpanded.value = false;
 	},
 );
 
