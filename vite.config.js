@@ -11,6 +11,18 @@ import { onRequestPost as parseFileRequest } from './functions/api/files/parse.t
 import { onRequestPost as analyzeVisionRequest } from './functions/api/vision/analyze.ts';
 import { MAX_SUMMARY_REQUEST_BYTES } from './functions/_shared/conversationSummary.ts';
 import { onRequestPost as summarizeRequest } from './functions/api/summarize.ts';
+import {
+	MAX_EMBED_REQUEST_BYTES,
+	onRequestPost as ragEmbedRequest,
+} from './functions/api/rag/embed.ts';
+import {
+	MAX_RERANK_REQUEST_BYTES,
+	onRequestPost as ragRerankRequest,
+} from './functions/api/rag/rerank.ts';
+import {
+	MAX_REWRITE_REQUEST_BYTES,
+	onRequestPost as ragRewriteRequest,
+} from './functions/api/rag/rewrite.ts';
 
 const MAX_MULTIPART_REQUEST_SIZE = 11 * 1024 * 1024;
 
@@ -367,6 +379,68 @@ const summarizeDevProxy = env => ({
 	},
 });
 
+const RAG_DEV_ROUTES = [
+	{ path: '/api/rag/embed', handler: ragEmbedRequest, maxBytes: MAX_EMBED_REQUEST_BYTES, label: '向量化' },
+	{ path: '/api/rag/rerank', handler: ragRerankRequest, maxBytes: MAX_RERANK_REQUEST_BYTES, label: '重排序' },
+	{ path: '/api/rag/rewrite', handler: ragRewriteRequest, maxBytes: MAX_REWRITE_REQUEST_BYTES, label: '查询改写' },
+];
+
+const ragDevProxy = env => ({
+	name: 'rag-dev-proxy',
+	configureServer(server) {
+		for (const { path, handler, maxBytes, label } of RAG_DEV_ROUTES) server.middlewares.use(path, async (request, response) => {
+			if (request.method !== 'POST') {
+				sendJsonError(response, 405, 'INVALID_REQUEST', 'Method Not Allowed', false);
+				return;
+			}
+
+			const controller = new AbortController();
+			response.on('close', () => {
+				if (!response.writableEnded) controller.abort();
+			});
+			try {
+				const body = await readRequestBody(request, maxBytes);
+				const headers = new Headers();
+				for (const name of ['content-type', 'content-length']) {
+					const value = request.headers[name];
+					if (typeof value === 'string') headers.set(name, value);
+				}
+				const result = await handler({
+					request: new Request(`http://localhost${path}`, {
+						method: 'POST',
+						headers,
+						body,
+						signal: controller.signal,
+					}),
+					env: {
+						RAG_EMBEDDING_PROVIDER: env.RAG_EMBEDDING_PROVIDER,
+						RAG_RERANK_PROVIDER: env.RAG_RERANK_PROVIDER,
+						RAG_REWRITE_MODEL: env.RAG_REWRITE_MODEL,
+						DASHSCOPE_RERANK_URL: env.DASHSCOPE_RERANK_URL,
+						SILICONFLOW_API_KEY: env.SILICONFLOW_API_KEY,
+						SILICONFLOW_BASE_URL: env.SILICONFLOW_BASE_URL,
+						DASHSCOPE_API_KEY: env.DASHSCOPE_API_KEY,
+						DASHSCOPE_BASE_URL: env.DASHSCOPE_BASE_URL,
+					},
+				});
+				if (response.destroyed) return;
+				response.statusCode = result.status;
+				result.headers.forEach((value, name) => response.setHeader(name, value));
+				response.end(Buffer.from(await result.arrayBuffer()));
+			} catch (error) {
+				if (response.writableEnded || response.destroyed) return;
+				const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
+				sendJsonError(
+					response,
+					tooLarge ? 413 : 500,
+					tooLarge ? 'REQUEST_TOO_LARGE' : 'UPSTREAM_UNAVAILABLE',
+					tooLarge ? `${label}请求体不能超过 256KB` : `${label}服务暂时不可用`,
+				);
+			}
+		});
+	},
+});
+
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
 
@@ -377,6 +451,7 @@ export default defineConfig(({ mode }) => {
 			fileParseDevProxy(),
 			visionAnalyzeDevProxy(env),
 			summarizeDevProxy(env),
+			ragDevProxy(env),
 			deepSeekDevProxy(env),
 			AutoImport({ resolvers: [ElementPlusResolver()] }),
 			Components({ resolvers: [ElementPlusResolver()] }),

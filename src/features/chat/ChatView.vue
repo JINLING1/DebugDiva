@@ -30,12 +30,23 @@ import { getMessageText } from '../../services/context/buildChatContext';
 import { useChatStore } from '../../store/chat';
 import { useSettingsStore } from '../../store/settings';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../types/attachment';
+import type { ChatParams } from '../../types/chat';
+import { createDocumentIndexService } from '../../services/rag/documentIndex';
+import { createIndexedDbRagIndexRepository } from '../../services/storage/ragIndexStorage';
 
 const chatStore = useChatStore();
 const settingsStore = useSettingsStore();
+const documentIndex =
+	typeof indexedDB === 'undefined'
+		? undefined
+		: createDocumentIndexService(createIndexedDbRagIndexRepository(indexedDB));
 const attachmentManager = useAttachments({
 	visionProvider: new ApiVisionProvider(),
+	documentIndex,
 });
+const retrieveDocuments: ChatParams['retrieveDocuments'] = documentIndex
+	? request => documentIndex.retrieve(request)
+	: undefined;
 const { records: attachmentRecords, storageError } = attachmentManager;
 const {
 	chatSessions,
@@ -111,6 +122,7 @@ const handleSend = async (text: string) => {
 		},
 		prepareAttachments: ({ prompt, attachmentIds, signal }) =>
 			attachmentManager.prepareForSend(attachmentIds, prompt, signal),
+		retrieveDocuments,
 	});
 	if (chatHistory.value.length > previousMessageCount) {
 		attachmentManager.releaseOriginalFiles(selectedIds);
@@ -171,12 +183,16 @@ const copyMessage = async (messageId: string) => {
 const regenerateMessage = (messageId: string) => {
 	const index = chatHistory.value.findIndex(item => item.id === messageId);
 	if (index >= 0) {
-		void handleUpdate(index, attachmentRecords.value, request =>
-			attachmentManager.prepareForSend(
-				request.attachmentIds,
-				request.prompt,
-				request.signal,
-			),
+		void handleUpdate(
+			index,
+			attachmentRecords.value,
+			request =>
+				attachmentManager.prepareForSend(
+					request.attachmentIds,
+					request.prompt,
+					request.signal,
+				),
+			retrieveDocuments,
 		);
 	}
 };
@@ -184,6 +200,7 @@ const regenerateMessage = (messageId: string) => {
 onMounted(() => {
 	loadSettings();
 	attachmentManager.load();
+	attachmentManager.resumeIndexing();
 	void attachmentManager.restoreImagePreviews();
 	loadDataFromLocalStorage();
 });
@@ -222,9 +239,13 @@ watch(
 		if (!canPrune) return;
 		attachmentManager.retain(retainedIds);
 		void attachmentManager.retainStoredImages(retainedIds);
+		void attachmentManager.retainDocumentIndexes(retainedIds);
 	},
 	{ flush: 'post' },
 );
 
-onUnmounted(() => attachmentManager.dispose());
+onUnmounted(() => {
+	attachmentManager.dispose();
+	documentIndex?.close();
+});
 </script>

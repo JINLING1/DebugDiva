@@ -38,6 +38,7 @@ describe('POST /api/files/parse', () => {
 				text: 'hello 文档',
 				truncated: false,
 				warnings: [],
+				segments: [{ start: 0, end: 8, kind: 'prose' }],
 			},
 		});
 	});

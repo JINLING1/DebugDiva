@@ -25,6 +25,9 @@ import {
 	type AttachmentParser,
 	type ImageAnalyzer,
 } from './useAttachments';
+import { createDocumentIndexService, type Embedder } from '../services/rag/documentIndex';
+import { createIndexedDbRagIndexRepository } from '../services/storage/ragIndexStorage';
+import { MAX_DOCUMENT_CONTEXT_TEXT_LENGTH } from '../types/attachment';
 
 beforeEach(() => {
 	vi.stubGlobal('indexedDB', new IDBFactory());
@@ -852,5 +855,113 @@ describe('useAttachments', () => {
 		expect(attachments.storageError.value).toMatchObject({
 			code: 'ATTACHMENT_STORAGE_QUOTA_EXCEEDED',
 		});
+	});
+});
+
+describe('useAttachments document indexing', () => {
+	const createIndex = (embed: Embedder) =>
+		createDocumentIndexService(createIndexedDbRagIndexRepository(new IDBFactory()), {
+			embed,
+		});
+	const fakeEmbed: Embedder = async texts => ({
+		model: 'fake-model',
+		dims: 2,
+		vectors: texts.map(() => [1, 0]),
+	});
+
+	const setup = (embed: Embedder = fakeEmbed, text = 'parsed text') => {
+		const documentIndex = createIndex(embed);
+		const attachments = useAttachments({
+			storage: new MemoryStorage(),
+			parseFile: async file => resultFor(file, text),
+			createId: () => 'doc-1',
+			now: () => 100,
+			documentIndex,
+		});
+		return { attachments, documentIndex };
+	};
+
+	const waitFor = async (predicate: () => boolean) => {
+		for (let i = 0; i < 50 && !predicate(); i += 1) await flushAsyncWork();
+		expect(predicate()).toBe(true);
+	};
+
+	const indexOf = (attachments: ReturnType<typeof useAttachments>) =>
+		(attachments.records.value[0] as DocumentAttachment).index;
+
+	it('stores chunks for BM25 first, then upgrades to vectors in the background', async () => {
+		let releaseEmbedding!: () => void;
+		const gate = new Promise<void>(resolve => {
+			releaseEmbedding = resolve;
+		});
+		const { attachments, documentIndex } = setup(async texts => {
+			await gate;
+			return fakeEmbed(texts);
+		});
+
+		attachments.queueFiles([new File(['x'], 'a.md', { type: 'text/markdown' })]);
+		await waitFor(() => indexOf(attachments)?.status === 'lexical');
+		expect(indexOf(attachments)?.chunkCount).toBeGreaterThan(0);
+
+		const lexical = await documentIndex.retrieve({ query: 'parsed', attachmentIds: ['doc-1'] });
+		expect(lexical.mode).toBe('bm25');
+
+		releaseEmbedding();
+		await waitFor(() => indexOf(attachments)?.status === 'ready');
+		expect(indexOf(attachments)?.model).toBe('fake-model');
+	});
+
+	it('keeps BM25 indexing when embedding fails', async () => {
+		const { attachments } = setup(async () => {
+			throw new Error('no api key');
+		});
+		attachments.queueFiles([new File(['x'], 'a.md', { type: 'text/markdown' })]);
+		await waitFor(() => indexOf(attachments)?.status === 'lexical');
+		await flushAsyncWork();
+		expect(indexOf(attachments)?.status).toBe('lexical');
+	});
+
+	it('persists only the 40,000-character context prefix but records the full length', async () => {
+		const longText = '文'.repeat(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH + 500);
+		const { attachments } = setup(fakeEmbed, longText);
+		attachments.queueFiles([new File(['x'], 'big.txt', { type: 'text/plain' })]);
+		await waitFor(() => attachments.records.value[0].status === 'ready');
+
+		const record = attachments.records.value[0] as DocumentAttachment;
+		expect(Array.from(record.text)).toHaveLength(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH);
+		expect(record.textLength).toBe(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH + 500);
+	});
+
+	it('waits for the BM25 stage before a send is prepared', async () => {
+		const { attachments } = setup();
+		attachments.queueFiles([new File(['x'], 'a.md', { type: 'text/markdown' })]);
+		await waitFor(() => attachments.records.value[0].status === 'ready');
+
+		await attachments.prepareForSend(['doc-1'], '问题', new AbortController().signal);
+		expect(['lexical', 'ready']).toContain(indexOf(attachments)?.status);
+	});
+
+	it('deletes the index together with the attachment', async () => {
+		const { attachments, documentIndex } = setup();
+		attachments.queueFiles([new File(['x'], 'a.md', { type: 'text/markdown' })]);
+		await waitFor(() => indexOf(attachments)?.status === 'ready');
+
+		attachments.remove('doc-1');
+		await flushAsyncWork();
+		const result = await documentIndex.retrieve({ query: 'parsed', attachmentIds: ['doc-1'] });
+		expect(result.degraded).toEqual(['no-index']);
+	});
+
+	it('backfills an index for documents saved before retrieval existed', async () => {
+		const storage = new MemoryStorage();
+		saveAttachmentResults(storage, [persistedAttachment({ text: '旧文档内容 legacy' })]);
+		const documentIndex = createIndex(fakeEmbed);
+		const attachments = useAttachments({ storage, documentIndex });
+		attachments.load();
+
+		attachments.resumeIndexing();
+		await waitFor(() => indexOf(attachments)?.status === 'ready');
+		const result = await documentIndex.retrieve({ query: 'legacy', attachmentIds: ['stored-id'] });
+		expect(result.passages[0].text).toContain('legacy');
 	});
 });

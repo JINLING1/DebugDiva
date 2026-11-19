@@ -6,6 +6,7 @@ import type {
 } from '../../types/chat';
 import type { ChatAttachment } from '../../types/attachment';
 import type { ProviderMessage } from '../../types/provider';
+import { formatRetrievedPassages, type RetrievalContext } from '../rag/routing';
 
 export const getMessageText = (message: ChatMessage): string =>
 	message.contents
@@ -44,6 +45,8 @@ export interface BuildChatContextOptions {
 	activeAttachmentIds?: readonly string[];
 	attachmentResults?: readonly ChatAttachment[];
 	summary?: ConversationSummary;
+	/** 检索结果：其中的文档不注入全文，改为在最后一条用户消息前注入检索片段。 */
+	retrieval?: RetrievalContext;
 }
 
 const sanitizeAttachmentMetadata = (value: string): string =>
@@ -108,11 +111,15 @@ export const buildChatContext = (
 	endExclusive = messages.length,
 	options: BuildChatContextOptions = {},
 ): ProviderMessage[] => {
-	const activeIds = [...new Set(options.activeAttachmentIds ?? [])];
+	const retrievedIds = new Set(options.retrieval?.attachmentIds ?? []);
+	const activeIds = [...new Set(options.activeAttachmentIds ?? [])].filter(
+		id => !retrievedIds.has(id),
+	);
 	const activeIdSet = new Set(activeIds);
 	const readyAttachments = new Map(
 		(options.attachmentResults ?? [])
 			.filter(hasUsableAttachmentContext)
+			.filter(attachment => !retrievedIds.has(attachment.id))
 			.map(attachment => [attachment.id, attachment]),
 	);
 	const injectedIds = new Set<string>();
@@ -211,6 +218,10 @@ export const buildChatContext = (
 					attachment !== undefined,
 			)
 			.map(formatAttachmentBlock);
+
+		if (options.retrieval) {
+			remainingBlocks.push(formatRetrievedPassages(options.retrieval.passages));
+		}
 
 		if (remainingBlocks.length) {
 			const latestUserContent = context[lastUserIndex].content;

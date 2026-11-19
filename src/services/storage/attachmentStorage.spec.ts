@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_PARSED_DOCUMENT_TEXT_LENGTH } from '../../api/files';
+import { MAX_DOCUMENT_CONTEXT_TEXT_LENGTH } from '../../types/attachment';
 import {
 	MAX_VISION_EXTRACTED_TEXT_LENGTH,
 	MAX_VISION_OBJECT_LENGTH,
@@ -296,7 +296,7 @@ describe('attachment storage', () => {
 				version: 1,
 				attachments: [
 					attachment({
-						text: 'x'.repeat(MAX_PARSED_DOCUMENT_TEXT_LENGTH + 10),
+						text: 'x'.repeat(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH + 10),
 					}),
 				],
 			}),
@@ -304,7 +304,7 @@ describe('attachment storage', () => {
 
 		const [loaded] = loadAttachmentResults(storage).attachments;
 		if (loaded.kind !== 'document') throw new Error('expected document');
-		expect(loaded.text).toHaveLength(MAX_PARSED_DOCUMENT_TEXT_LENGTH);
+		expect(loaded.text).toHaveLength(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH);
 		expect(loaded.truncated).toBe(true);
 		expect(loaded.warnings).toContain('提取文本已截断至 40,000 字符');
 	});
@@ -317,7 +317,7 @@ describe('attachment storage', () => {
 				version: 1,
 				attachments: [
 					attachment({
-						text: '😀'.repeat(MAX_PARSED_DOCUMENT_TEXT_LENGTH + 1),
+						text: '😀'.repeat(MAX_DOCUMENT_CONTEXT_TEXT_LENGTH + 1),
 					}),
 				],
 			}),
@@ -326,7 +326,7 @@ describe('attachment storage', () => {
 		const [loaded] = loadAttachmentResults(storage).attachments;
 		if (loaded.kind !== 'document') throw new Error('expected document');
 		expect(Array.from(loaded.text)).toHaveLength(
-			MAX_PARSED_DOCUMENT_TEXT_LENGTH,
+			MAX_DOCUMENT_CONTEXT_TEXT_LENGTH,
 		);
 		expect(loaded.text.endsWith('😀')).toBe(true);
 	});

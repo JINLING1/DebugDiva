@@ -1,0 +1,9 @@
+// 示例评测集：仅用于验证评测流水线，不代表真实效果。格式说明见 eval/rag/README.md
+{"id":"s01","type":"factual","question":"部署 DebugDiva 需要什么 Node.js 版本？为什么？","answer":"Node.js 22 或更高，因为 unpdf 当前版本要求 Node.js 22。","evidence":[{"doc":"debugdiva-ops.md","quote":"要求 Node.js 22 或更高版本，因为 unpdf 当前版本要求 Node.js 22"}]}
+{"id":"s02","type":"keyword","question":"STREAM_PARSE_FAILED 是什么原因？","answer":"流式响应在收到 [DONE] 之前意外结束，例如网络中断或代理超时。","evidence":[{"doc":"debugdiva-ops.md","quote":"STREAM_PARSE_FAILED 表示流式响应在收到 [DONE] 之前意外结束"}]}
+{"id":"s03","type":"keyword","question":"报错 REQUEST_TOO_LARGE 时，聊天和摘要接口的上限分别是多少？","answer":"聊天 256KB，摘要 128KB。","evidence":[{"doc":"debugdiva-ops.md","quote":"聊天请求体不能超过 256KB，摘要请求体不能超过 128KB"}]}
+{"id":"s04","type":"multi_section","question":"线上用户反馈 AI 服务不可用，应该如何排查，前端会不会自动重试？","answer":"让用户提供 requestId 到日志检索；UPSTREAM_UNAVAILABLE 可重试，未输出内容时自动重试一次。","evidence":[{"doc":"debugdiva-ops.md","quote":"先让用户提供界面上显示的 requestId，再到日志中按 requestId 检索"},{"doc":"debugdiva-ops.md","quote":"如果尚未输出任何内容，前端会对可重试的 5xx 错误自动重试一次"}]}
+{"id":"s05","type":"follow_up","history":[{"role":"user","content":"DebugDiva 支持哪些图片格式？"},{"role":"assistant","content":"支持 JPEG、PNG 和 WebP。"}],"question":"那尺寸上有什么限制？","answer":"最大边长 4096 像素，总像素不超过 16,777,216。","evidence":[{"doc":"debugdiva-ops.md","quote":"图片最大边长 4096 像素，总像素不超过 16,777,216"}]}
+{"id":"s06","type":"factual","question":"深度思考模式用的是哪个模型？","answer":"deepseek-v4-flash，开启思考，reasoning effort 为 high。","evidence":[{"doc":"debugdiva-ops.md","quote":"深度思考同样使用 deepseek-v4-flash，但开启思考并把 reasoning effort 设为 high"}]}
+{"id":"s07","type":"factual","question":"为什么密钥不能用 VITE_ 前缀？","answer":"envPrefix 为 PUBLIC_，带前缀的变量会被打包进浏览器代码。","evidence":[{"doc":"debugdiva-ops.md","quote":"所有服务端密钥都不应使用 VITE_ 或 PUBLIC_ 前缀"}]}
+{"id":"s08","type":"no_answer","question":"DebugDiva 支持哪些单点登录方式？","answer":"文档中没有相关内容。","evidence":[]}

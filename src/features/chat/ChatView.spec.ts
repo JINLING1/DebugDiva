@@ -83,6 +83,8 @@ const createAttachmentManager = () => ({
 	remove: vi.fn().mockReturnValue(true),
 	retain: vi.fn().mockReturnValue([]),
 	retainStoredImages: vi.fn().mockResolvedValue([]),
+	retainDocumentIndexes: vi.fn().mockResolvedValue([]),
+	resumeIndexing: vi.fn(),
 	restoreImagePreviews: vi.fn().mockResolvedValue({
 		restoredIds: [],
 		missingIds: [],

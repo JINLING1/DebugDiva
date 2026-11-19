@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { defineComponent } from 'vue';
+import { defineComponent, nextTick } from 'vue';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import MessageItem from './MessageItem.vue';
@@ -121,5 +121,90 @@ describe('MessageItem', () => {
 		expect(wrapper.find('[aria-label="重新生成回复"]').exists()).toBe(false);
 		await wrapper.get('[aria-label="重试回复"]').trigger('click');
 		expect(wrapper.emitted('retry')).toEqual([['failed-answer']]);
+	});
+});
+
+describe('MessageItem citations and retrieval trace', () => {
+	const citedMessage = createMessage({
+		contents: [
+			{ type: 'text', text: '端口被占用 [1]。' },
+			{
+				type: 'citation',
+				attachmentId: 'doc',
+				name: 'node-errors.md',
+				index: 1,
+				headingPath: ['Errors', 'Common system errors'],
+				excerpt: 'EADDRINUSE (Address already in use)',
+			},
+		],
+		retrievalTrace: {
+			query: '端口被占用',
+			rewrittenQuery: 'EADDRINUSE address already in use',
+			mode: 'hybrid',
+			reranked: true,
+			noAnswer: false,
+			degraded: [],
+			hits: [{ chunkId: 'doc:3', attachmentId: 'doc', score: 0.93, merged: 2 }],
+			durationMs: 812,
+		},
+	});
+
+	it('renders [n] as a clickable reference that focuses the citation card', async () => {
+		// 使用真实的 Markdown 组件，验证上标渲染与点击联动
+		const wrapper = mount(MessageItem, {
+			props: { message: citedMessage, isLast: true },
+			attachTo: document.body,
+		});
+		await nextTick();
+		const reference = wrapper.get('sup.citation-ref');
+		expect(reference.text()).toBe('[1]');
+
+		await reference.trigger('click');
+		const card = wrapper.get('[data-citation-index="1"]');
+		expect(card.classes()).toContain('citation-content--highlight');
+		expect(document.activeElement).toBe(card.element);
+		expect(card.text()).toContain('Errors › Common system errors');
+		wrapper.unmount();
+	});
+
+	it('does not turn [n] into a reference when there is no matching card or inside code', async () => {
+		const wrapper = mount(MessageItem, {
+			props: {
+				message: createMessage({
+					contents: [{ type: 'text', text: '普通文本 [1] 与 `arr[1]`' }],
+				}),
+				isLast: true,
+			},
+		});
+		await nextTick();
+		expect(wrapper.find('sup.citation-ref').exists()).toBe(false);
+		expect(wrapper.text()).toContain('[1]');
+	});
+
+	it('shows a collapsed retrieval details panel with the attachment names', () => {
+		const wrapper = mount(MessageItem, {
+			props: {
+				message: citedMessage,
+				isLast: true,
+				attachmentResults: [
+					{
+						id: 'doc',
+						kind: 'document',
+						name: 'node-errors.md',
+						mimeType: 'text/markdown',
+						size: 1,
+						status: 'ready',
+						text: '',
+					} as never,
+				],
+			},
+			global: { stubs: { Markdown: MarkdownStub } },
+		});
+		const details = wrapper.get('details.retrieval-trace');
+		expect(details.attributes('open')).toBeUndefined();
+		expect(details.text()).toContain('混合检索 + 改写 + 重排序 · 1 段 · 812 ms');
+		expect(details.text()).toContain('EADDRINUSE address already in use');
+		expect(details.text()).toContain('node-errors.md');
+		expect(details.text()).toContain('合并 2 段');
 	});
 });

@@ -18,13 +18,17 @@ import {
 } from '../services/storage/imageBlobStorage';
 import {
 	MAX_ATTACHMENTS_PER_MESSAGE,
+	MAX_DOCUMENT_CONTEXT_TEXT_LENGTH,
 	type ChatAttachment,
+	type DocumentSegment,
 	type DocumentAttachment,
 	type ImageAttachment,
 	type ParsedDocument,
 	type VisionResult,
 } from '../types/attachment';
 import type { VisionProvider } from '../providers/vision/VisionProvider';
+import type { DocumentIndexService } from '../services/rag/documentIndex';
+import { wholeTextSegment } from '../../functions/_shared/documentSegments';
 
 export type AttachmentParser = (
 	file: File,
@@ -49,6 +53,8 @@ export interface UseAttachmentsOptions {
 	createObjectURL?: (value: Blob) => string;
 	revokeObjectURL?: (url: string) => void;
 	imageBlobRepository?: ImageBlobRepository;
+	/** 提供时，文档解析完成后会切块入库并在后台向量化，用于检索增强。 */
+	documentIndex?: DocumentIndexService;
 }
 
 export interface AttachmentOperationError {
@@ -122,6 +128,9 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 	const storage = options.storage ?? resolveBrowserStorage();
 	const imageBlobRepository =
 		options.imageBlobRepository ?? resolveImageBlobRepository();
+	const documentIndex = options.documentIndex;
+	/** 入库（BM25 可用）阶段的任务；发送前只等待这一阶段，不等待向量化。 */
+	const indexing = new Map<string, Promise<void>>();
 	const parseFile = options.parseFile ?? defaultParser;
 	const analyzeImage =
 		options.analyzeImage ??
@@ -318,18 +327,31 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 					await parseFile(file, controller.signal),
 				);
 				if (controllers.get(id) !== controller) return;
+				const characters = Array.from(result.text);
 				replaceRecord(id, {
 					status: 'ready',
 					name: result.name,
 					mimeType: result.mimeType,
 					size: result.size,
-					text: result.text,
+					// 只持久化全文注入所需的前 40,000 字符；完整文本进入本地检索索引。
+					text:
+						characters.length > MAX_DOCUMENT_CONTEXT_TEXT_LENGTH
+							? characters.slice(0, MAX_DOCUMENT_CONTEXT_TEXT_LENGTH).join('')
+							: result.text,
+					textLength: characters.length,
 					pageCount: result.pageCount,
 					truncated: result.truncated,
 					warnings: [...result.warnings],
+					...(documentIndex ? { index: { status: 'indexing' as const } } : {}),
 					errorCode: undefined,
 					errorMessage: undefined,
 				});
+				scheduleIndexing(
+					id,
+					result.name,
+					result.text,
+					result.segments ?? wholeTextSegment(result.text, 'prose'),
+				);
 			}
 		} catch (error) {
 			if (controllers.get(id) !== controller) return;
@@ -350,6 +372,48 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 			parentSignal?.removeEventListener('abort', abortFromParent);
 			if (controllers.get(id) === controller) controllers.delete(id);
 		}
+	};
+
+	const setIndexInfo = (
+		id: string,
+		index: NonNullable<DocumentAttachment['index']>,
+	): void => {
+		const record = records.value.find(item => item.id === id);
+		if (record?.kind !== 'document') return;
+		replaceRecord(id, { index });
+	};
+
+	/** 后台向量化；失败时保持 lexical（BM25 仍可用），不影响聊天。 */
+	const embedInBackground = (id: string, chunkCount?: number): void => {
+		if (!documentIndex) return;
+		void documentIndex.embedDocument(id).then(
+			({ model }) => {
+				if (model) setIndexInfo(id, { status: 'ready', chunkCount, model });
+			},
+			() => undefined,
+		);
+	};
+
+	const scheduleIndexing = (
+		id: string,
+		name: string,
+		text: string,
+		segments: DocumentSegment[],
+	): void => {
+		if (!documentIndex) return;
+		const task = documentIndex
+			.storeDocument({ attachmentId: id, name, text, segments })
+			.then(
+				({ chunkCount }) => {
+					setIndexInfo(id, { status: 'lexical', chunkCount });
+					embedInBackground(id, chunkCount);
+				},
+				() => setIndexInfo(id, { status: 'failed' }),
+			)
+			.finally(() => {
+				if (indexing.get(id) === task) indexing.delete(id);
+			});
+		indexing.set(id, task);
 	};
 
 	const scheduleProcessing = (id: string): void => {
@@ -500,6 +564,9 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 				.map(record => processAttachment(record.id, prompt, signal)),
 		);
 
+		// 等待入库阶段完成（毫秒级），保证本轮可以检索；不等待向量化。
+		await Promise.all(normalizedIds.map(id => indexing.get(id)).filter(Boolean));
+
 		if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 		for (const id of normalizedIds) {
 			const record = records.value.find(item => item.id === id);
@@ -544,6 +611,10 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		releasePreviewUrl(id);
 		records.value = records.value.filter(record => record.id !== id);
 		persist();
+		if (removedRecord.kind === 'document') {
+			indexing.delete(id);
+			void documentIndex?.remove(id).catch(() => undefined);
+		}
 		if (removedRecord.kind === 'image') {
 			void imageBlobRepository?.delete(id).catch(() => {
 				storageError.value = {
@@ -586,6 +657,41 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 				message: '本地图片清理失败',
 			};
 			return [];
+		}
+	};
+
+	/** 清理不再被任何会话引用的文档索引（与 retainStoredImages 对应）。 */
+	const retainDocumentIndexes = async (
+		retainedIds: readonly string[],
+	): Promise<string[]> => {
+		if (!documentIndex) return [];
+		try {
+			return await documentIndex.retain(retainedIds);
+		} catch {
+			return [];
+		}
+	};
+
+	/**
+	 * 加载后补齐索引：
+	 * - lexical：上次向量化未完成，后台继续；
+	 * - 无索引的旧文档：用已保存的文本（最多 40,000 字符）补建索引。
+	 */
+	const resumeIndexing = (): void => {
+		if (!documentIndex) return;
+		for (const record of records.value) {
+			if (record.kind !== 'document' || record.status !== 'ready') continue;
+			if (record.index?.status === 'lexical') {
+				embedInBackground(record.id, record.index.chunkCount);
+			} else if (!record.index && record.text.trim()) {
+				replaceRecord(record.id, { index: { status: 'indexing' } }, false);
+				scheduleIndexing(
+					record.id,
+					record.name,
+					record.text,
+					wholeTextSegment(record.text, 'prose'),
+				);
+			}
 		}
 	};
 
@@ -737,6 +843,8 @@ export const useAttachments = (options: UseAttachmentsOptions = {}) => {
 		remove,
 		retain,
 		retainStoredImages,
+		retainDocumentIndexes,
+		resumeIndexing,
 		restoreImagePreviews,
 		getReadyAttachments,
 		hasOriginalFile,

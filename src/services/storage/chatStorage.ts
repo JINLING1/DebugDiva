@@ -4,6 +4,7 @@ import type {
 	ChatSession,
 	MessageContent,
 	MessageStatus,
+	RetrievalTrace,
 	TokenUsage,
 } from '../../types/chat';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../types/attachment';
@@ -26,6 +27,76 @@ const MAX_MIME_TYPE_LENGTH = 128;
 const MAX_ALT_LENGTH = 1_000;
 const MAX_CITATION_EXCERPT_LENGTH = 4_000;
 const MAX_ERROR_CODE_LENGTH = 128;
+const MAX_HEADING_PATH_DEPTH = 8;
+const MAX_HEADING_LENGTH = 200;
+const MAX_TRACE_QUERY_LENGTH = 2_000;
+const MAX_TRACE_HITS = 20;
+const MAX_TRACE_DEGRADED = 10;
+
+const positiveInteger = (value: unknown): number | undefined =>
+	typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+
+const normalizeHeadingPath = (value: unknown): string[] | undefined => {
+	if (!Array.isArray(value)) return undefined;
+	const path = value
+		.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+		.slice(0, MAX_HEADING_PATH_DEPTH)
+		.map(item => truncate(item, MAX_HEADING_LENGTH));
+	return path.length ? path : undefined;
+};
+
+const normalizeRetrievalTrace = (value: unknown): RetrievalTrace | undefined => {
+	if (!value || typeof value !== 'object') return undefined;
+	const trace = value as Partial<RetrievalTrace>;
+	if (typeof trace.query !== 'string') return undefined;
+	const mode =
+		trace.mode === 'hybrid' || trace.mode === 'bm25' || trace.mode === 'dense'
+			? trace.mode
+			: 'bm25';
+	const hits = Array.isArray(trace.hits)
+		? trace.hits
+				.filter(
+					hit =>
+						hit &&
+						validIdentifier(hit.chunkId, MAX_ATTACHMENT_ID_LENGTH * 2) &&
+						validIdentifier(hit.attachmentId, MAX_ATTACHMENT_ID_LENGTH) &&
+						typeof hit.score === 'number' &&
+						Number.isFinite(hit.score),
+				)
+				.slice(0, MAX_TRACE_HITS)
+				.map(hit => ({
+					chunkId: hit.chunkId,
+					attachmentId: hit.attachmentId,
+					score: hit.score,
+					...(positiveInteger(hit.merged) ? { merged: hit.merged } : {}),
+				}))
+		: [];
+	return {
+		query: truncate(trace.query, MAX_TRACE_QUERY_LENGTH),
+		...(typeof trace.rewrittenQuery === 'string'
+			? { rewrittenQuery: truncate(trace.rewrittenQuery, MAX_TRACE_QUERY_LENGTH) }
+			: {}),
+		mode,
+		reranked: trace.reranked === true,
+		noAnswer: trace.noAnswer === true,
+		degraded: Array.isArray(trace.degraded)
+			? trace.degraded
+					.filter((item): item is string => typeof item === 'string')
+					.slice(0, MAX_TRACE_DEGRADED)
+					.map(item => truncate(item, MAX_ERROR_CODE_LENGTH))
+			: [],
+		hits,
+		...(typeof trace.invalidCitations === 'number' &&
+		Number.isInteger(trace.invalidCitations) &&
+		trace.invalidCitations >= 0
+			? { invalidCitations: trace.invalidCitations }
+			: {}),
+		durationMs:
+			typeof trace.durationMs === 'number' && Number.isFinite(trace.durationMs)
+				? Math.max(0, Math.round(trace.durationMs))
+				: 0,
+	};
+};
 
 export interface StorageLike {
 	getItem(key: string): string | null;
@@ -163,6 +234,11 @@ const normalizeContent = (value: unknown): MessageContent | null => {
 					? content.page
 					: undefined,
 			excerpt: truncate(content.excerpt, MAX_CITATION_EXCERPT_LENGTH),
+			...(positiveInteger(content.pageEnd) ? { pageEnd: content.pageEnd } : {}),
+			...(normalizeHeadingPath(content.headingPath)
+				? { headingPath: normalizeHeadingPath(content.headingPath) }
+				: {}),
+			...(positiveInteger(content.index) ? { index: content.index } : {}),
 		};
 	}
 	return null;
@@ -218,6 +294,9 @@ const normalizeV2Message = (
 				? truncate(message.requestId, MAX_MESSAGE_ID_LENGTH)
 				: undefined,
 		usage: normalizeUsage(message.usage),
+		...(normalizeRetrievalTrace(message.retrievalTrace)
+			? { retrievalTrace: normalizeRetrievalTrace(message.retrievalTrace) }
+			: {}),
 		createdAt:
 			asTimestamp(message.createdAt) ?? timestampFromId(message.id) ?? fallbackTime + index,
 	};
@@ -370,6 +449,7 @@ export const saveChatSessions = (
 						? truncate(message.requestId, MAX_MESSAGE_ID_LENGTH)
 						: undefined;
 				const usage = normalizeUsage(message.usage);
+				const retrievalTrace = normalizeRetrievalTrace(message.retrievalTrace);
 
 				return {
 					id: validIdentifier(message.id, MAX_MESSAGE_ID_LENGTH)
@@ -382,6 +462,7 @@ export const saveChatSessions = (
 					...(errorCode !== undefined ? { errorCode } : {}),
 					...(requestId !== undefined ? { requestId } : {}),
 					...(usage !== undefined ? { usage } : {}),
+					...(retrievalTrace !== undefined ? { retrievalTrace } : {}),
 					createdAt:
 						asTimestamp(message.createdAt) ?? updatedAt + messageIndex,
 				};

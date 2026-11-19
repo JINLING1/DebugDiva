@@ -63,14 +63,46 @@ md.renderer.rules.fence = function (
 	return `<div class="code-block-wrapper hljs" style="position: relative;">${buttonHtml}${renderedBlock}</div>`;
 };
 
-export const renderSafeMarkdown = (message: string): string => {
+/**
+ * 检索引用 `[n]` 渲染成可点击的上标。只处理 env.citations 中存在的编号，
+ * 因此普通回答里的 `[1]` 不受影响；代码块与行内代码不经过 inline 规则，天然排除。
+ */
+md.inline.ruler.before('link', 'citation_ref', (state, silent) => {
+	const allowed = (state.env as { citations?: ReadonlySet<number> } | undefined)?.citations;
+	if (!allowed?.size || state.src.charCodeAt(state.pos) !== 0x5b /* [ */) return false;
+	const match = /^\[(\d{1,3})\](?!\()/.exec(state.src.slice(state.pos));
+	if (!match) return false;
+	const index = Number(match[1]);
+	if (!allowed.has(index)) return false;
+	if (!silent) {
+		const token = state.push('citation_ref', 'sup', 0);
+		token.meta = { index };
+	}
+	state.pos += match[0].length;
+	return true;
+});
+
+md.renderer.rules.citation_ref = (tokens: { [x: string]: any }, idx: number) => {
+	const index = Number(tokens[idx].meta.index);
+	return `<sup class="citation-ref" data-citation="${index}" role="button" tabindex="0" title="查看引用 ${index}">[${index}]</sup>`;
+};
+
+export interface RenderMarkdownOptions {
+	/** 有引用卡片的编号；正文中的 [n] 只有在这里出现时才渲染为可点击上标。 */
+	citations?: readonly number[];
+}
+
+export const renderSafeMarkdown = (
+	message: string,
+	{ citations }: RenderMarkdownOptions = {},
+): string => {
 	if (!message) return '';
 
 	message = message.replace(/\[(.*?)\]\((.*?)\)[。.]/g, '![$1]($2)');
 	message = message.replace(/\[(.*?)\]\((.*?)\)/g, '[$1]($2)');
 	message = message.replace(/(!\[[^\]]*]\(.*?\))(\S)/g, '$1\n\n$2');
 
-	const rawHtml = md.render(message);
+	const rawHtml = md.render(message, { citations: new Set(citations ?? []) });
 	//返回经过 DOMPurify 洗除危险脚本后的安全 DOM 字符串
 	return DOMPurify.sanitize(rawHtml);
 };

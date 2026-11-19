@@ -1,9 +1,9 @@
 import { AppError } from '../services/errors/AppError';
-import type { ParsedDocument } from '../types/attachment';
+import type { DocumentSegment, ParsedDocument } from '../types/attachment';
 
 export const FILE_PARSE_ENDPOINT = '/api/files/parse';
 export const MAX_ATTACHMENT_FILE_SIZE = 10 * 1024 * 1024;
-export const MAX_PARSED_DOCUMENT_TEXT_LENGTH = 40_000;
+export const MAX_PARSED_DOCUMENT_TEXT_LENGTH = 300_000;
 
 export type FileFetch = (
 	input: RequestInfo | URL,
@@ -118,10 +118,12 @@ export const validateParsedDocument = (value: unknown): ParsedDocument => {
 	if (Array.from(text).length > MAX_PARSED_DOCUMENT_TEXT_LENGTH) {
 		throw new AppError({
 			code: 'TEXT_LIMIT_EXCEEDED',
-			message: '文件提取文本不能超过 40,000 字符',
+			message: `文件提取文本不能超过 ${MAX_PARSED_DOCUMENT_TEXT_LENGTH.toLocaleString('en-US')} 字符`,
 			retryable: false,
 		});
 	}
+
+	const segments = validateSegments(value.segments, text.length);
 
 	return {
 		name,
@@ -131,7 +133,48 @@ export const validateParsedDocument = (value: unknown): ParsedDocument => {
 		pageCount: pageCount as number | undefined,
 		truncated,
 		warnings: [...warnings],
+		...(segments ? { segments } : {}),
 	};
+};
+
+/**
+ * 校验结构分段；字段缺失（旧版服务端）时返回 undefined，由调用方按整篇处理。
+ * 任何一段越界或格式错误都视为整体无效，避免切块时读到错误区间。
+ */
+const validateSegments = (
+	value: unknown,
+	textLength: number,
+): DocumentSegment[] | undefined => {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) throw invalidResponse('文件解析结果的分段格式无效');
+	let previousEnd = 0;
+	return value.map(item => {
+		if (
+			!isRecord(item) ||
+			!Number.isInteger(item.start) ||
+			!Number.isInteger(item.end) ||
+			(item.start as number) < previousEnd ||
+			(item.end as number) <= (item.start as number) ||
+			(item.end as number) > textLength ||
+			(item.kind !== 'prose' && item.kind !== 'code') ||
+			(item.page !== undefined && !(Number.isInteger(item.page) && (item.page as number) >= 1)) ||
+			(item.headingPath !== undefined &&
+				!(
+					Array.isArray(item.headingPath) &&
+					item.headingPath.every(entry => typeof entry === 'string')
+				))
+		) {
+			throw invalidResponse('文件解析结果的分段格式无效');
+		}
+		previousEnd = item.end as number;
+		return {
+			start: item.start as number,
+			end: item.end as number,
+			kind: item.kind,
+			...(item.page !== undefined ? { page: item.page as number } : {}),
+			...(item.headingPath ? { headingPath: [...(item.headingPath as string[])] } : {}),
+		};
+	});
 };
 
 export const parseDocumentFile = async (
