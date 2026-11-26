@@ -7,10 +7,16 @@ import {
 	IMAGE_BLOB_STORE_NAME,
 	type ImageBlobRepository,
 } from './imageBlobStorage';
+import {
+	createIndexedDbRagIndexRepository,
+	RAG_INDEX_DATABASE_NAME,
+	type RagIndexRepository,
+} from './ragIndexStorage';
 
 export const THEME_STORAGE_KEY = 'theme';
 export const LEGACY_CLIENT_ID_STORAGE_KEY = 'debugdiva:client-id:v1';
 export const IMAGE_BLOB_LOCAL_DATA_KEY = `indexeddb:${IMAGE_BLOB_STORE_NAME}`;
+export const RAG_INDEX_LOCAL_DATA_KEY = `indexeddb:${RAG_INDEX_DATABASE_NAME}`;
 
 export const DEBUG_DIVA_LOCAL_DATA_KEYS = [
 	CHAT_SESSIONS_STORAGE_KEY,
@@ -45,6 +51,7 @@ const errorMessage = (error: unknown): string =>
 export const clearAllDebugDivaLocalData = async (
 	storage: LocalDataStorageLike,
 	imageBlobRepository?: ImageBlobRepository,
+	ragIndexRepository?: RagIndexRepository,
 ): Promise<ClearAllLocalDataResult> => {
 	const removedKeys: string[] = [];
 	const failed: LocalDataRemovalFailure[] = [];
@@ -75,9 +82,27 @@ export const clearAllDebugDivaLocalData = async (
 		}
 	}
 
+	const ownsRagRepository = !ragIndexRepository;
+	const ragRepository =
+		ragIndexRepository ??
+		(typeof indexedDB === 'undefined'
+			? undefined
+			: createIndexedDbRagIndexRepository(indexedDB));
+	if (ragRepository) {
+		try {
+			await ragRepository.clear();
+			removedKeys.push(RAG_INDEX_LOCAL_DATA_KEY);
+		} catch (error) {
+			failed.push({ key: RAG_INDEX_LOCAL_DATA_KEY, error: errorMessage(error) });
+		} finally {
+			if (ownsRagRepository) ragRepository.close();
+		}
+	}
+
 	return {
 		ok: failed.length === 0,
-		attempted: DEBUG_DIVA_LOCAL_DATA_KEYS.length + (repository ? 1 : 0),
+		attempted:
+			DEBUG_DIVA_LOCAL_DATA_KEYS.length + (repository ? 1 : 0) + (ragRepository ? 1 : 0),
 		removedKeys,
 		failed,
 	};

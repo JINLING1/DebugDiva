@@ -1,9 +1,19 @@
 import { unzipSync } from 'fflate';
 import { SaxesParser } from 'saxes';
 import { getDocumentProxy } from 'unpdf';
+import {
+	composeBlocks,
+	segmentMarkdown,
+	truncateComposed,
+	wholeTextSegment,
+	type ComposedDocument,
+	type DocumentSegment,
+	type TextBlock,
+} from './documentSegments';
 
 export const MAX_FILE_SIZE = 10 * 1024 * 1024;
-export const MAX_EXTRACTED_TEXT_LENGTH = 40_000;
+/** 解析阶段的文本上限；完整文本用于本地检索索引，注入上下文时另有 40,000 字符上限。 */
+export const MAX_EXTRACTED_TEXT_LENGTH = 300_000;
 export const MAX_PDF_PAGES = 50;
 export const MAX_DOCX_XML_SIZE = 5 * 1024 * 1024;
 
@@ -22,6 +32,8 @@ export interface ParsedDocumentData {
 	pageCount?: number;
 	truncated: boolean;
 	warnings: string[];
+	/** 结构分段（页码、标题路径、代码块），偏移量指向 `text`。 */
+	segments: DocumentSegment[];
 }
 
 export class FileParseError extends Error {
@@ -189,15 +201,25 @@ const detectDocumentKind = (
 	throw new FileParseError('UNSUPPORTED_FILE_TYPE', '暂不支持该文件类型', 415);
 };
 
-const truncateText = (input: string) => {
-	const characters = Array.from(input);
-	if (characters.length <= MAX_EXTRACTED_TEXT_LENGTH) {
-		return { text: input, truncated: false };
+const truncationWarning = (maxLength: number) =>
+	`内容超过 ${maxLength.toLocaleString('en-US')} 字符，已截断`;
+
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown']);
+const PROSE_TEXT_EXTENSIONS = new Set(['txt', ...MARKDOWN_EXTENSIONS]);
+
+const segmentPlainText = (
+	text: string,
+	fileName: string,
+	mimeType: string,
+): DocumentSegment[] => {
+	const extension = getExtension(fileName);
+	const baseType = mimeType.toLowerCase().split(';')[0].trim();
+	if (MARKDOWN_EXTENSIONS.has(extension) || baseType === 'text/markdown') {
+		return segmentMarkdown(text);
 	}
-	return {
-		text: characters.slice(0, MAX_EXTRACTED_TEXT_LENGTH).join(''),
-		truncated: true,
-	};
+	const isCode =
+		TEXT_EXTENSIONS.has(extension) && !PROSE_TEXT_EXTENSIONS.has(extension);
+	return wholeTextSegment(text, isCode ? 'code' : 'prose');
 };
 
 const normalizeExtractedText = (input: string) =>
@@ -219,7 +241,7 @@ const parsePlainText = (bytes: Uint8Array) => {
 	}
 };
 
-const parsePdfText = async (bytes: Uint8Array) => {
+const parsePdfText = async (bytes: Uint8Array, maxLength: number) => {
 	const warnings: string[] = [];
 	const deadline = Date.now() + 8_000;
 	let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
@@ -236,10 +258,11 @@ const parsePdfText = async (bytes: Uint8Array) => {
 			);
 		}
 
-		let text = '';
+		const pages: TextBlock[] = [];
 		let characterCount = 0;
 		let truncated = false;
 		for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+			let text = '';
 			if (Date.now() > deadline) {
 				throw new FileParseError('PARSE_FAILED', 'PDF 解析超时，请尝试更小的文件', 422);
 			}
@@ -258,37 +281,49 @@ const parsePdfText = async (bytes: Uint8Array) => {
 					if (!('str' in item) || typeof item.str !== 'string') continue;
 					const itemText = item.hasEOL ? `${item.str}\n` : `${item.str} `;
 					const characters = Array.from(itemText);
-					const remaining = MAX_EXTRACTED_TEXT_LENGTH - characterCount;
+					const remaining = maxLength - characterCount;
 					if (characters.length > remaining) {
 						text += characters.slice(0, remaining).join('');
-						characterCount = MAX_EXTRACTED_TEXT_LENGTH;
+						characterCount = maxLength;
 						truncated = true;
 						break;
 					}
 					text += itemText;
 					characterCount += characters.length;
 				}
-				if (!truncated && characterCount < MAX_EXTRACTED_TEXT_LENGTH) {
-					text += '\n';
-					characterCount += 1;
-				}
 			} finally {
 				page.cleanup();
 			}
+			pages.push({
+				text: normalizeExtractedText(text),
+				page: pageNumber,
+				kind: 'prose',
+			});
 			if (truncated) break;
 		}
 
-		text = normalizeExtractedText(text);
-		if (!text) {
+		// 页与页之间用空行分隔；每页一个 segment，保留页码供引用使用。
+		const composed = truncateComposed(
+			composeBlocks(pages, '\n\n'),
+			maxLength,
+		);
+		if (!composed.text) {
 			throw new FileParseError(
 				'PARSE_FAILED',
 				'未提取到可用文本，扫描版 PDF 暂不支持 OCR',
 				422,
 			);
 		}
-		if (truncated) warnings.push('内容超过 40,000 字符，已截断');
+		truncated ||= composed.truncated;
+		if (truncated) warnings.push(truncationWarning(maxLength));
 
-		return { text, pageCount: pdf.numPages, truncated, warnings };
+		return {
+			text: composed.text,
+			segments: composed.segments,
+			pageCount: pdf.numPages,
+			truncated,
+			warnings,
+		};
 	} catch (cause) {
 		if (cause instanceof FileParseError) throw cause;
 		const message = cause instanceof Error ? cause.message : '';
@@ -306,8 +341,27 @@ const parseWordXml = (xml: string) => {
 		throw new FileParseError('PARSE_FAILED', 'DOCX 包含不安全的 XML 声明', 422);
 	}
 
-	let output = '';
+	const blocks: TextBlock[] = [];
+	const headingStack: string[] = [];
+	let paragraph = '';
+	let headingLevel: number | undefined;
 	let textDepth = 0;
+	let tableDepth = 0;
+	let cell: string[] = [];
+	let row: string[] = [];
+
+	const readVal = (tag: { attributes: Record<string, unknown> }) => {
+		for (const attribute of Object.values(tag.attributes)) {
+			const { local, value } = attribute as { local?: string; value?: string };
+			if (local === 'val') return value;
+		}
+		return undefined;
+	};
+
+	const pushBlock = (text: string) => {
+		blocks.push({ text, headingPath: [...headingStack], kind: 'prose' });
+	};
+
 	const parser = new SaxesParser({ xmlns: true, position: false });
 	parser.on('opentag', tag => {
 		switch (tag.local) {
@@ -315,27 +369,78 @@ const parseWordXml = (xml: string) => {
 				textDepth += 1;
 				break;
 			case 'tab':
-				output += '\t';
+				paragraph += '\t';
 				break;
 			case 'br':
 			case 'cr':
-				output += '\n';
+				paragraph += '\n';
 				break;
+			case 'tbl':
+				tableDepth += 1;
+				break;
+			case 'pStyle':
+				headingLevel ??= headingLevelFromStyle(readVal(tag));
+				break;
+			case 'outlineLvl': {
+				const level = Number(readVal(tag));
+				if (Number.isInteger(level) && level >= 0 && level <= 5) {
+					headingLevel = level + 1;
+				}
+				break;
+			}
 		}
 	});
 	parser.on('text', text => {
-		if (textDepth > 0) output += text;
+		if (textDepth > 0) paragraph += text;
 	});
 	parser.on('closetag', tag => {
-		if (tag.local === 't') textDepth = Math.max(0, textDepth - 1);
-		if (tag.local === 'p') output += '\n';
-		if (tag.local === 'tc') output += '\t';
+		switch (tag.local) {
+			case 't':
+				textDepth = Math.max(0, textDepth - 1);
+				break;
+			case 'p': {
+				const text = normalizeExtractedText(paragraph);
+				if (tableDepth > 0) {
+					if (text) cell.push(text.replace(/\s*\n\s*/g, ' '));
+				} else if (text) {
+					if (headingLevel !== undefined) {
+						headingStack.length = Math.min(headingStack.length, headingLevel - 1);
+						headingStack.push(text.replace(/\s+/g, ' '));
+					}
+					pushBlock(text);
+				}
+				paragraph = '';
+				headingLevel = undefined;
+				break;
+			}
+			case 'tc':
+				row.push(cell.join(' '));
+				cell = [];
+				break;
+			case 'tr': {
+				const text = row.join('\t').trim();
+				if (text) pushBlock(text);
+				row = [];
+				break;
+			}
+			case 'tbl':
+				tableDepth = Math.max(0, tableDepth - 1);
+				break;
+		}
 	});
 	parser.on('error', () => {
 		throw new FileParseError('PARSE_FAILED', 'DOCX XML 格式无效', 422);
 	});
 	parser.write(xml).close();
-	return normalizeExtractedText(output);
+	return composeBlocks(blocks, '\n');
+};
+
+/** Word 内置标题样式：英文 Heading1–6、中文“标题 1–6”（styleId 常为纯数字）、Title。 */
+const headingLevelFromStyle = (styleId: string | undefined) => {
+	if (!styleId) return undefined;
+	if (/^title$/i.test(styleId)) return 1;
+	const match = /^(?:heading|标题)?\s*([1-6])$/i.exec(styleId);
+	return match ? Number(match[1]) : undefined;
 };
 
 const parseDocxText = (bytes: Uint8Array) => {
@@ -371,13 +476,31 @@ const parseDocxText = (bytes: Uint8Array) => {
 	const xml = new TextDecoder('utf-8', { fatal: true }).decode(
 		entries['word/document.xml'],
 	);
-	const text = parseWordXml(xml);
-	if (!text) throw new FileParseError('EMPTY_FILE', '文档中没有可读取的文本', 422);
-	return text;
+	const composed = parseWordXml(xml);
+	if (!composed.text) {
+		throw new FileParseError('EMPTY_FILE', '文档中没有可读取的文本', 422);
+	}
+	return composed;
 };
+
+const limitDocument = (composed: ComposedDocument, maxLength: number) => {
+	const limited = truncateComposed(composed, maxLength);
+	return {
+		text: limited.text,
+		segments: limited.segments,
+		truncated: limited.truncated,
+		warnings: limited.truncated ? [truncationWarning(maxLength)] : [],
+	};
+};
+
+export interface ParseDocumentOptions {
+	/** 提取文本的最大字符数（code point），默认 MAX_EXTRACTED_TEXT_LENGTH。离线评测会调大它。 */
+	maxTextLength?: number;
+}
 
 export const parseDocumentFile = async (
 	file: File,
+	{ maxTextLength: maxLength = MAX_EXTRACTED_TEXT_LENGTH }: ParseDocumentOptions = {},
 ): Promise<ParsedDocumentData> => {
 	if (file.size === 0) throw new FileParseError('EMPTY_FILE', '文件内容为空');
 	if (file.size > MAX_FILE_SIZE) {
@@ -394,20 +517,28 @@ export const parseDocumentFile = async (
 		(kind === 'pdf' ? PDF_MIME_TYPE : kind === 'docx' ? DOCX_MIME_TYPE : 'text/plain');
 
 	if (kind === 'pdf') {
-		const result = await parsePdfText(bytes);
+		const result = await parsePdfText(bytes, maxLength);
 		return { name: file.name, mimeType, size: file.size, ...result };
 	}
 
-	const extracted = kind === 'docx' ? parseDocxText(bytes) : parsePlainText(bytes);
-	const normalized = normalizeExtractedText(extracted);
+	if (kind === 'docx') {
+		return {
+			name: file.name,
+			mimeType,
+			size: file.size,
+			...limitDocument(parseDocxText(bytes), maxLength),
+		};
+	}
+
+	const normalized = normalizeExtractedText(parsePlainText(bytes));
 	if (!normalized) throw new FileParseError('EMPTY_FILE', '文件中没有可读取的文本', 422);
-	const limited = truncateText(normalized);
 	return {
 		name: file.name,
 		mimeType,
 		size: file.size,
-		text: limited.text,
-		truncated: limited.truncated,
-		warnings: limited.truncated ? ['内容超过 40,000 字符，已截断'] : [],
+		...limitDocument({
+			text: normalized,
+			segments: segmentPlainText(normalized, file.name, mimeType),
+		}, maxLength),
 	};
 };

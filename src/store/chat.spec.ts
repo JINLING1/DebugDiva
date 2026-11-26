@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
+import { loadChatSessions } from '../services/storage/chatStorage';
 import { DeepSeekChatProvider } from '../providers/chat/DeepSeekChatProvider';
 import { AppError } from '../services/errors/AppError';
 import type { ChatEvent } from '../types/provider';
@@ -402,6 +403,151 @@ describe('chat store provider orchestration', () => {
 		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain(
 			'仅存在于当前页面',
 		);
+	});
+
+	it('injects retrieved passages instead of the full text of an indexed large document', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const big = attachment('big', '前 40,000 字的全文前缀', {
+			textLength: 200_000,
+			index: { status: 'ready', chunkCount: 300, model: 'BAAI/bge-m3' },
+		});
+		const retrieveDocuments = vi.fn().mockResolvedValue({
+			passages: [
+				{
+					chunkId: 'big:42',
+					attachmentId: 'big',
+					name: 'big.txt',
+					text: 'ERR_HTTP_HEADERS_SENT：响应头已发送',
+					page: 7,
+					score: 0.9,
+				},
+			],
+		});
+
+		await store.handleChat({
+			input: 'ERR_HTTP_HEADERS_SENT 是什么？',
+			attachmentIds: ['big'],
+			attachmentResults: [big],
+			retrieveDocuments,
+		});
+
+		expect(retrieveDocuments).toHaveBeenCalledWith(
+			expect.objectContaining({
+				query: 'ERR_HTTP_HEADERS_SENT 是什么？',
+				attachmentIds: ['big'],
+				signal: expect.any(AbortSignal),
+			}),
+		);
+		const content = streamSpy.mock.calls[0][0].messages.at(-1)?.content ?? '';
+		expect(content).toContain('[1] 《big.txt》 第 7 页');
+		expect(content).not.toContain('全文前缀');
+	});
+
+	it('backfills [n] citations and records a retrieval trace after the answer completes', async () => {
+		vi.spyOn(DeepSeekChatProvider.prototype, 'stream').mockImplementation(() =>
+			createStream([
+				{ type: 'text-delta', text: '响应头已经发送后又设置了头 [1]，' },
+				{ type: 'text-delta', text: '另见 [5]。' },
+				{ type: 'done', finishReason: 'stop' },
+			]),
+		);
+		const store = useChatStore();
+		const big = attachment('big', '全文前缀', {
+			textLength: 200_000,
+			index: { status: 'ready' },
+		});
+
+		await store.handleChat({
+			input: 'ERR_HTTP_HEADERS_SENT 是什么？',
+			attachmentIds: ['big'],
+			attachmentResults: [big],
+			retrieveDocuments: vi.fn().mockResolvedValue({
+				passages: [
+					{
+						chunkId: 'big:42',
+						chunkIds: ['big:42', 'big:43'],
+						attachmentId: 'big',
+						name: 'big.txt',
+						text: 'ERR_HTTP_HEADERS_SENT：响应头已发送',
+						page: 7,
+						headingPath: ['Node.js error codes'],
+						score: 0.91,
+					},
+				],
+				mode: 'hybrid',
+				reranked: true,
+				noAnswer: false,
+				degraded: [],
+				rewrittenQuery: 'ERR_HTTP_HEADERS_SENT headers already sent',
+			}),
+		});
+
+		const answer = store.chatHistory.at(-1)!;
+		expect(answer.status).toBe('completed');
+		expect(answer.contents[0]).toEqual({ type: 'text', text: '响应头已经发送后又设置了头 [1]，另见。' });
+		expect(answer.contents[1]).toEqual({
+			type: 'citation',
+			attachmentId: 'big',
+			name: 'big.txt',
+			index: 1,
+			page: 7,
+			headingPath: ['Node.js error codes'],
+			excerpt: 'ERR_HTTP_HEADERS_SENT：响应头已发送',
+		});
+		expect(answer.retrievalTrace).toMatchObject({
+			query: 'ERR_HTTP_HEADERS_SENT 是什么？',
+			rewrittenQuery: 'ERR_HTTP_HEADERS_SENT headers already sent',
+			mode: 'hybrid',
+			reranked: true,
+			hits: [{ chunkId: 'big:42', attachmentId: 'big', score: 0.91, merged: 2 }],
+			invalidCitations: 1,
+		});
+
+		// 刷新页面后引用卡片与检索追踪仍然存在（经过存储层的白名单校验）
+		const reloaded = loadChatSessions(localStorage).sessions[0].messages.at(-1)!;
+		expect(reloaded.contents[1]).toMatchObject({ type: 'citation', index: 1 });
+		expect(reloaded.retrievalTrace?.invalidCitations).toBe(1);
+	});
+
+	it('falls back to full-text injection when retrieval fails', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const big = attachment('big', '兜底用的全文前缀', {
+			textLength: 200_000,
+			index: { status: 'lexical' },
+		});
+
+		await store.handleChat({
+			input: '这份文档讲了什么？',
+			attachmentIds: ['big'],
+			attachmentResults: [big],
+			retrieveDocuments: vi.fn().mockRejectedValue(new Error('IndexedDB unavailable')),
+		});
+
+		expect(store.chatHistory.at(-1)?.status).toBe('completed');
+		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain('兜底用的全文前缀');
+	});
+
+	it('does not count indexed documents toward the full-text character limit', async () => {
+		const streamSpy = mockSuccessfulProvider();
+		const store = useChatStore();
+		const docs = ['a', 'b', 'c'].map(id =>
+			attachment(id, '字'.repeat(39_000), {
+				textLength: 150_000,
+				index: { status: 'ready' },
+			}),
+		);
+
+		await store.handleChat({
+			input: '比较三份文档',
+			attachmentIds: ['a', 'b', 'c'],
+			attachmentResults: docs,
+			retrieveDocuments: vi.fn().mockResolvedValue({ passages: [] }),
+		});
+
+		expect(streamSpy).toHaveBeenCalledOnce();
+		expect(streamSpy.mock.calls[0][0].messages.at(-1)?.content).toContain('没有检索到相关片段');
 	});
 
 	it('stores image metadata without preview URLs and sends only the vision result to DeepSeek', async () => {

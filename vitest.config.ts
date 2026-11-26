@@ -5,7 +5,7 @@ export default defineConfig({
 	plugins: [vue()],
 	test: {
 		environment: 'node',
-		include: ['src/**/*.spec.ts', 'functions/**/*.spec.ts'],
+		include: ['src/**/*.spec.ts', 'functions/**/*.spec.ts', 'eval/**/*.spec.ts'],
 		clearMocks: true,
 		restoreMocks: true,
 	},

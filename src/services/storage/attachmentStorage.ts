@@ -7,12 +7,15 @@ import {
 	MAX_VISION_WARNING_LENGTH,
 	MAX_VISION_WARNINGS,
 } from '../../api/vision';
-import type {
-	AttachmentStatus,
-	ChatAttachment,
-	DocumentAttachment,
-	ImageAttachment,
-	VisionResult,
+import {
+	MAX_DOCUMENT_CONTEXT_TEXT_LENGTH,
+	type AttachmentStatus,
+	type ChatAttachment,
+	type DocumentAttachment,
+	type DocumentIndexInfo,
+	type DocumentIndexStatus,
+	type ImageAttachment,
+	type VisionResult,
 } from '../../types/attachment';
 
 export const ATTACHMENT_RESULTS_STORAGE_KEY =
@@ -191,13 +194,21 @@ export const normalizeDocumentAttachment = (
 	let truncated = value.truncated === true;
 	const warnings = normalizeWarnings(value.warnings);
 	const textCharacters = Array.from(text);
-	if (textCharacters.length > MAX_PARSED_DOCUMENT_TEXT_LENGTH) {
-		text = textCharacters.slice(0, MAX_PARSED_DOCUMENT_TEXT_LENGTH).join('');
+	if (textCharacters.length > MAX_DOCUMENT_CONTEXT_TEXT_LENGTH) {
+		text = textCharacters.slice(0, MAX_DOCUMENT_CONTEXT_TEXT_LENGTH).join('');
 		truncated = true;
 		if (!warnings.includes(TEXT_TRUNCATED_WARNING)) {
 			warnings.push(TEXT_TRUNCATED_WARNING);
 		}
 	}
+	const textLength =
+		typeof value.textLength === 'number' &&
+		Number.isInteger(value.textLength) &&
+		value.textLength >= 0 &&
+		value.textLength <= MAX_PARSED_DOCUMENT_TEXT_LENGTH
+			? value.textLength
+			: undefined;
+	const index = normalizeDocumentIndex(value.index);
 
 	const pageCount =
 		typeof value.pageCount === 'number' &&
@@ -216,9 +227,11 @@ export const normalizeDocumentAttachment = (
 		mimeType: truncate(value.mimeType, MAX_ATTACHMENT_MIME_LENGTH),
 		size,
 		text,
+		...(textLength !== undefined ? { textLength } : {}),
 		pageCount,
 		truncated,
 		warnings,
+		...(index ? { index } : {}),
 		errorCode: optionalBoundedString(
 			errorCode,
 			MAX_ATTACHMENT_ERROR_CODE_LENGTH,
@@ -229,6 +242,36 @@ export const normalizeDocumentAttachment = (
 		),
 		createdAt,
 		updatedAt,
+	};
+};
+
+const DOCUMENT_INDEX_STATUSES = new Set<DocumentIndexStatus>([
+	'indexing',
+	'lexical',
+	'ready',
+	'failed',
+]);
+
+/** 白名单校验检索索引状态；“indexing”说明上次入库被中断，按失败处理。 */
+const normalizeDocumentIndex = (value: unknown): DocumentIndexInfo | undefined => {
+	if (!isRecord(value) || !DOCUMENT_INDEX_STATUSES.has(value.status as DocumentIndexStatus)) {
+		return undefined;
+	}
+	const status = value.status === 'indexing' ? 'failed' : (value.status as DocumentIndexStatus);
+	const chunkCount =
+		typeof value.chunkCount === 'number' &&
+		Number.isInteger(value.chunkCount) &&
+		value.chunkCount >= 0
+			? value.chunkCount
+			: undefined;
+	const model = optionalBoundedString(
+		typeof value.model === 'string' ? value.model : undefined,
+		MAX_ATTACHMENT_MIME_LENGTH,
+	);
+	return {
+		status,
+		...(chunkCount !== undefined ? { chunkCount } : {}),
+		...(model ? { model } : {}),
 	};
 };
 

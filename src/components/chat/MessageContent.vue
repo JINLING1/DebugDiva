@@ -3,6 +3,8 @@
 		v-if="content.type === 'text'"
 		:message="content.text"
 		:is-user-message="role === 'user'"
+		:citations="citations"
+		@cite="index => emit('cite', index)"
 	/>
 
 	<article
@@ -48,11 +50,23 @@
 		<figcaption>{{ imageName }}</figcaption>
 	</figure>
 
-	<aside v-else class="citation-content" aria-label="引用内容">
+	<aside
+		v-else
+		class="citation-content"
+		aria-label="引用内容"
+		:data-citation-index="content.index"
+		:tabindex="content.index ? -1 : undefined"
+	>
 		<header class="citation-header">
-			<strong>{{ content.name }}</strong>
-			<span v-if="content.page">第 {{ content.page }} 页</span>
+			<span class="citation-source">
+				<span v-if="content.index" class="citation-index">[{{ content.index }}]</span>
+				<strong>{{ content.name }}</strong>
+			</span>
+			<span v-if="citationLocation">{{ citationLocation }}</span>
 		</header>
+		<p v-if="content.headingPath?.length" class="citation-path">
+			{{ content.headingPath.join(' › ') }}
+		</p>
 		<blockquote>{{ content.excerpt }}</blockquote>
 	</aside>
 </template>
@@ -71,7 +85,17 @@ const props = defineProps<{
 	content: MessageContentType;
 	role: ChatRole;
 	attachment?: ChatAttachment;
+	/** 本条消息中有引用卡片的编号，传给 Markdown 渲染可点击的 [n]。 */
+	citations?: number[];
 }>();
+
+const emit = defineEmits<{ cite: [index: number] }>();
+
+const citationLocation = computed(() => {
+	if (props.content.type !== 'citation' || !props.content.page) return '';
+	const { page, pageEnd } = props.content;
+	return pageEnd && pageEnd !== page ? `第 ${page}–${pageEnd} 页` : `第 ${page} 页`;
+});
 
 const imageAttachment = computed(() =>
 	props.attachment?.kind === 'image' ? props.attachment : undefined,
@@ -209,7 +233,39 @@ const formatFileSize = (size: number) => {
 	font-size: 12px;
 }
 
+.citation-content {
+	scroll-margin: 80px;
+	transition: box-shadow 0.3s ease;
+}
+
+.citation-content--highlight {
+	box-shadow: 0 0 0 2px var(--dd-accent);
+}
+
+.citation-source {
+	display: inline-flex;
+	gap: 6px;
+	align-items: baseline;
+	min-width: 0;
+}
+
+.citation-index {
+	color: var(--dd-accent);
+	font-weight: 600;
+}
+
+.citation-path {
+	margin: 4px 0 0;
+	color: var(--dd-text-secondary);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
 .citation-content blockquote {
+	max-height: 168px;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 	margin: 7px 0 0;
 	color: var(--dd-text-secondary);
 	font-size: 13px;

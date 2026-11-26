@@ -25,8 +25,16 @@ import {
 	appendMessageText,
 	buildChatContext,
 	getMessageText,
+	isContextMessage,
 	setMessageText,
 } from '../services/context/buildChatContext';
+import { buildRetrievalQuery } from '../services/rag/retrieve';
+import { collectCitations } from '../services/rag/citations';
+import {
+	hasSearchableIndex,
+	planDocumentContext,
+	type RetrievalContext,
+} from '../services/rag/routing';
 import {
 	CHAT_CAPABILITY_SYSTEM_PROMPT,
 	detectImageGenerationIntent,
@@ -401,6 +409,7 @@ export const useChatStore = defineStore('chat', () => {
 
 		const totalCharacters = active.reduce(
 			(total, attachment) => {
+				if (hasSearchableIndex(attachment)) return total;
 				const contextText =
 					attachment.kind === 'document'
 						? attachment.text
@@ -458,6 +467,7 @@ export const useChatStore = defineStore('chat', () => {
 			selected.push(attachment);
 		}
 		const knownCharacters = selected.reduce((total, attachment) => {
+			if (hasSearchableIndex(attachment)) return total;
 			if (attachment.kind === 'document') {
 				return total + Array.from(attachment.text).length;
 			}
@@ -506,6 +516,92 @@ export const useChatStore = defineStore('chat', () => {
 		}
 	};
 
+	/**
+	 * 大文档走检索：按路由规则挑出需要检索的文档，用规则式改写后的问题检索片段。
+	 * 检索失败（非取消）时返回 undefined，调用方退回全文注入，不阻塞聊天。
+	 */
+	/**
+	 * 回答完成后把正文里的 [n] 回填为引用卡片，删除越界编号并记入检索追踪。
+	 */
+	const attachCitations = (target: ChatMessage, retrieval: RetrievalContext) => {
+		const text = getMessageText(target);
+		const query = [retrieval.trace?.query, retrieval.trace?.rewrittenQuery]
+			.filter(Boolean)
+			.join(' ');
+		const result = collectCitations(text, retrieval.passages, query);
+		if (result.text !== text) setMessageText(target, result.text);
+		target.contents.push(...result.citations);
+		if (target.retrievalTrace) target.retrievalTrace.invalidCitations = result.invalid.length;
+	};
+
+	const retrieveDocumentContext = async ({
+		attachments,
+		attachmentIds,
+		question,
+		contextEnd,
+		signal,
+		retrieveDocuments,
+	}: {
+		attachments: readonly ChatAttachment[];
+		attachmentIds: readonly string[];
+		question: string;
+		contextEnd: number;
+		signal: AbortSignal;
+		retrieveDocuments?: ChatParams['retrieveDocuments'];
+	}): Promise<RetrievalContext | undefined> => {
+		if (!retrieveDocuments) return undefined;
+		const plan = planDocumentContext(attachments, attachmentIds);
+		if (!plan.retrievalIds.length) return undefined;
+
+		// 当前问题之前的最近两条对话，用于补全“那后者呢？”这类追问。
+		const history = chatHistory.value
+			.slice(0, contextEnd)
+			.filter(
+				message =>
+					(message.role === 'user' || message.role === 'assistant') &&
+					isContextMessage(message),
+			)
+			.slice(0, -1)
+			.slice(-2)
+			.map(message => ({
+				role: message.role as 'user' | 'assistant',
+				content: getMessageText(message),
+			}));
+		const query = buildRetrievalQuery(question, history);
+		const started = Date.now();
+		try {
+			const result = await retrieveDocuments({
+				query,
+				attachmentIds: plan.retrievalIds,
+				signal,
+			});
+			return {
+				attachmentIds: plan.retrievalIds,
+				passages: result.passages,
+				trace: {
+					query,
+					...(result.rewrittenQuery ? { rewrittenQuery: result.rewrittenQuery } : {}),
+					mode: result.mode ?? 'bm25',
+					reranked: result.reranked ?? false,
+					noAnswer: result.noAnswer ?? false,
+					degraded: result.degraded ?? [],
+					hits: result.passages.map(passage => ({
+						chunkId: passage.chunkId,
+						attachmentId: passage.attachmentId,
+						score: passage.score,
+						...(passage.chunkIds && passage.chunkIds.length > 1
+							? { merged: passage.chunkIds.length }
+							: {}),
+					})),
+					durationMs: Date.now() - started,
+				},
+			};
+		} catch (error) {
+			if (signal.aborted) throw error;
+			return undefined;
+		}
+	};
+
 	const handleChat = async ({
 		input = '',
 		userInput = '',
@@ -514,6 +610,7 @@ export const useChatStore = defineStore('chat', () => {
 		attachmentResults,
 		onAccepted,
 		prepareAttachments,
+		retrieveDocuments,
 	}: ChatParams = {}) => {
 		if (isAssistantTyping.value) {
 			ElMessage.warning('AI正在输出，请稍后再试。');
@@ -650,12 +747,25 @@ export const useChatStore = defineStore('chat', () => {
 					retryable: true,
 				});
 			}
+			const contextEnd = updateIndex ?? chatHistory.value.length - 1;
+			const retrieval = await retrieveDocumentContext({
+				attachments: attachmentContext.all,
+				attachmentIds: requestAttachmentIds,
+				question: normalizedInput,
+				contextEnd,
+				signal: controller.signal,
+				retrieveDocuments,
+			});
+			if (retrieval?.trace && assistantMessageIndex === targetIndex) {
+				const target = chatHistory.value[targetIndex];
+				if (target) target.retrievalTrace = retrieval.trace;
+			}
 			const contextOptions = {
 				activeAttachmentIds: requestAttachmentIds,
 				attachmentResults: attachmentContext.all,
 				summary: getCurrentConversationSummary(updateIndex),
+				retrieval,
 			};
-			const contextEnd = updateIndex ?? chatHistory.value.length - 1;
 			const requestMessages: ProviderMessage[] = [
 				{ role: 'system', content: CHAT_CAPABILITY_SYSTEM_PROMPT },
 				...buildChatContext(
@@ -749,6 +859,7 @@ export const useChatStore = defineStore('chat', () => {
 				if (target && target.status !== 'error') {
 					if (getMessageText(target).trim()) {
 						target.status = 'completed';
+						if (retrieval?.passages.length) attachCitations(target, retrieval);
 					} else {
 						target.status = 'error';
 						target.errorCode = 'EMPTY_RESPONSE';
@@ -807,6 +918,7 @@ export const useChatStore = defineStore('chat', () => {
 		index: number,
 		attachmentResults?: ChatAttachment[],
 		prepareAttachments?: ChatParams['prepareAttachments'],
+		retrieveDocuments?: ChatParams['retrieveDocuments'],
 	) => {
 		const previousUserMessage = chatHistory.value
 			.slice(0, index)
@@ -828,6 +940,7 @@ export const useChatStore = defineStore('chat', () => {
 			attachmentIds: getMessageAttachmentIds(previousUserMessage),
 			attachmentResults,
 			prepareAttachments,
+			retrieveDocuments,
 		});
 	};
 

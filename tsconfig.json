@@ -19,6 +19,7 @@
     "src/**/*.tsx",
     "src/**/*.vue",
     "functions/**/*.ts",
+    "eval/**/*.ts",
     "vite-env.d.ts",
     "vitest.config.ts"
   ]

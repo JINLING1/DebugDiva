@@ -12,3 +12,7 @@ coverage
 !.vscode/extensions.json
 .DS_Store
 Thumbs.db
+
+# RAG eval download cache
+eval/rag/main/.cache/
+eval/rag/.cache/

@@ -1,5 +1,6 @@
 <template>
 	<article
+		ref="root"
 		class="message-item"
 		:class="`message-item--${message.role}`"
 		:data-message-id="message.id"
@@ -17,6 +18,14 @@
 					:content="content"
 					:role="message.role"
 					:attachment="attachmentFor(content)"
+					:citations="citationIndexes"
+					@cite="focusCitation"
+				/>
+
+				<RetrievalTraceDetails
+					v-if="message.role === 'assistant' && message.retrievalTrace && !showSpinner"
+					:trace="message.retrievalTrace"
+					:attachment-results="attachmentResults"
 				/>
 
 				<div
@@ -75,13 +84,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import {
 	CopyDocument,
 	Refresh,
 	RefreshRight,
 } from '@element-plus/icons-vue';
 import MessageContent from './MessageContent.vue';
+import RetrievalTraceDetails from './RetrievalTraceDetails.vue';
 import type { ChatAttachment } from '../../types/attachment';
 import type { ChatMessage, MessageContent as Content } from '../../types/chat';
 
@@ -96,6 +106,28 @@ const attachmentFor = (content: Content): ChatAttachment | undefined => {
 	return props.attachmentResults?.find(
 		attachment => attachment.id === content.attachmentId,
 	);
+};
+
+const root = ref<HTMLElement>();
+
+/** 有引用卡片的编号：只有这些 [n] 会渲染成可点击上标。 */
+const citationIndexes = computed(() =>
+	props.message.contents.flatMap(content =>
+		content.type === 'citation' && content.index ? [content.index] : [],
+	),
+);
+
+const HIGHLIGHT_CLASS = 'citation-content--highlight';
+
+/** 点击正文中的 [n]：滚动到对应引用卡片并短暂高亮。 */
+const focusCitation = (index: number) => {
+	const card = root.value?.querySelector<HTMLElement>(`[data-citation-index="${index}"]`);
+	if (!card) return;
+	// 居中而不是 nearest：底部悬浮的输入框会遮住贴近视口底边的卡片
+	card.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+	card.focus({ preventScroll: true });
+	card.classList.add(HIGHLIGHT_CLASS);
+	window.setTimeout(() => card.classList.remove(HIGHLIGHT_CLASS), 1_600);
 };
 
 const emit = defineEmits<{

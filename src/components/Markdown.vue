@@ -3,7 +3,7 @@
     'user-message': isUserMessage,
     'ai-message': !isUserMessage,
   }">
-    <div class="message-content" @click="handleContentClick">
+    <div class="message-content" @click="handleContentClick" @keydown.enter="handleContentKeydown">
       <div v-html="htmlContent"></div>
 
       <!-- 用于图片放大展示 -->
@@ -20,7 +20,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, onMounted } from "vue";
+import { ref, watch, onMounted, type PropType } from "vue";
 import { ElMessage } from "element-plus";
 import { renderSafeMarkdown, codeCacheMap } from "../utils/markdownHelper.ts";
 
@@ -30,15 +30,42 @@ const props = defineProps({
     default: "",
   },
   isUserMessage: Boolean,
+  /** 有引用卡片的编号；正文中的 [n] 渲染为可点击上标。 */
+  citations: {
+    type: Array as PropType<number[]>,
+    default: () => [],
+  },
 });
+
+const emit = defineEmits<{ cite: [index: number] }>();
 
 const htmlContent = ref<string>("");
 const isBigger = ref<boolean>(false);
 const enlargedImageUrl = ref<string>("");
 
-//负责处理图片点击放大和复制代码
+const citationIndexOf = (target: HTMLElement) => {
+  const citationRef = target.closest<HTMLElement>(".citation-ref");
+  const index = Number(citationRef?.dataset.citation);
+  return citationRef && Number.isInteger(index) ? index : undefined;
+};
+
+const handleContentKeydown = (event: KeyboardEvent) => {
+  const index = citationIndexOf(event.target as HTMLElement);
+  if (index !== undefined) {
+    event.preventDefault();
+    emit("cite", index);
+  }
+};
+
+//负责处理引用跳转、图片点击放大和复制代码
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
+
+  const citation = citationIndexOf(target);
+  if (citation !== undefined) {
+    emit("cite", citation);
+    return;
+  }
 
   const copyBtn = target.closest(".copy-icon");
   if (copyBtn) {
@@ -62,17 +89,14 @@ const handleContentClick = (event: MouseEvent) => {
   }
 };
 
-//监听 message 变化，进行渲染
-watch(
-  () => props.message,
-  (newMessage) => {
-    htmlContent.value = renderSafeMarkdown(newMessage);
-  }
-);
+const render = () => {
+  htmlContent.value = renderSafeMarkdown(props.message, { citations: props.citations });
+};
 
-onMounted(() => {
-  htmlContent.value = renderSafeMarkdown(props.message);
-});
+//监听 message 与引用编号变化，进行渲染
+watch(() => [props.message, props.citations.join(",")], render);
+
+onMounted(render);
 </script>
 
 <style scoped>
@@ -152,6 +176,23 @@ onMounted(() => {
   width: fit-content;
   text-align: left;
   word-break: break-word;
+}
+
+/* 检索引用上标 */
+:deep(.citation-ref) {
+  margin: 0 1px;
+  padding: 0 2px;
+  border-radius: 4px;
+  color: var(--dd-accent);
+  font-size: 0.75em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+:deep(.citation-ref:hover),
+:deep(.citation-ref:focus-visible) {
+  background: var(--dd-surface-muted);
+  outline: none;
 }
 
 /* 放大图片时的遮罩 */
